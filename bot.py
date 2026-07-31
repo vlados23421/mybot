@@ -72,6 +72,10 @@ def get_cancel_menu():
     markup.add(types.KeyboardButton("❌ Отмена"))
     return markup
 
+def is_cancel(text):
+    """Проверяет, является ли текст командой отмены"""
+    return text and (text.lower() in ["❌ отмена", "отмена", "/cancel"])
+
 # ===== КОМАНДЫ =====
 @bot.message_handler(commands=['start'])
 def start(message):
@@ -111,25 +115,20 @@ def help_command(message):
         reply_markup=get_main_menu()
     )
 
-@bot.message_handler(func=lambda msg: msg.text == "ℹ️ О боте")
-def about(message):
-    about_text = (
-        "🤖 *VIBE RUSSIA Bot*\n\n"
-        "Версия: 2.0\n"
-        "Разработан для проекта VIBE RUSSIA\n\n"
-        "📌 *Назначение:*\n"
-        "• Прием заявок на Хелперов\n"
-        "• Обработка обращений в техподдержку\n"
-        "• Прием жалоб\n\n"
-        "💡 *Все заявки автоматически отправляются администрации.*"
-    )
-    bot.send_message(
-        message.chat.id,
-        about_text,
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
+# ===== ОБРАБОТКА ТЕКСТОВЫХ КОМАНД =====
+@bot.message_handler(func=lambda msg: msg.text and msg.text.lower() in ["хелпер", "стать хелпером", "helper"])
+def helper_text_command(message):
+    start_helper(message)
 
+@bot.message_handler(func=lambda msg: msg.text and msg.text.lower() in ["техподдержка", "поддержка", "support", "помощь"])
+def support_text_command(message):
+    start_support(message)
+
+@bot.message_handler(func=lambda msg: msg.text and msg.text.lower() in ["жалоба", "подать жалобу", "complain"])
+def complain_text_command(message):
+    start_complain(message)
+
+# ===== КНОПКИ МЕНЮ =====
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
     bot.set_state(message.from_user.id, UserStates.helper_name, message.chat.id)
@@ -164,6 +163,25 @@ def start_complain(message):
         reply_markup=get_cancel_menu()
     )
 
+@bot.message_handler(func=lambda msg: msg.text == "ℹ️ О боте")
+def about(message):
+    about_text = (
+        "🤖 *VIBE RUSSIA Bot*\n\n"
+        "Версия: 2.0\n"
+        "Разработан для проекта VIBE RUSSIA\n\n"
+        "📌 *Назначение:*\n"
+        "• Прием заявок на Хелперов\n"
+        "• Обработка обращений в техподдержку\n"
+        "• Прием жалоб\n\n"
+        "💡 *Все заявки автоматически отправляются администрации.*"
+    )
+    bot.send_message(
+        message.chat.id,
+        about_text,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
+
 @bot.message_handler(func=lambda msg: msg.text == "❌ Отмена")
 def cancel_action(message):
     bot.delete_state(message.from_user.id, message.chat.id)
@@ -176,7 +194,7 @@ def cancel_action(message):
 # ===== ОБРАБОТКА АНКЕТЫ ХЕЛПЕРА =====
 @bot.message_handler(state=UserStates.helper_name)
 def process_helper_name(message):
-    if message.text == "❌ Отмена":
+    if is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -187,7 +205,7 @@ def process_helper_name(message):
 
 @bot.message_handler(state=UserStates.helper_age)
 def process_helper_age(message):
-    if message.text == "❌ Отмена":
+    if is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -202,7 +220,7 @@ def process_helper_age(message):
 
 @bot.message_handler(state=UserStates.helper_experience)
 def process_helper_experience(message):
-    if message.text == "❌ Отмена":
+    if is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -213,7 +231,7 @@ def process_helper_experience(message):
 
 @bot.message_handler(state=UserStates.helper_contact)
 def process_helper_contact(message):
-    if message.text == "❌ Отмена":
+    if is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -242,7 +260,7 @@ def process_helper_contact(message):
 # ===== ОБРАБОТКА ТЕХПОДДЕРЖКИ =====
 @bot.message_handler(state=UserStates.support_problem, content_types=['text', 'photo', 'document'])
 def process_support(message):
-    if message.text and message.text == "❌ Отмена":
+    if message.text and is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -270,7 +288,7 @@ def process_support(message):
 # ===== ОБРАБОТКА ЖАЛОБЫ =====
 @bot.message_handler(state=UserStates.complain_against)
 def process_complain_against(message):
-    if message.text == "❌ Отмена":
+    if is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -281,7 +299,7 @@ def process_complain_against(message):
 
 @bot.message_handler(state=UserStates.complain_reason)
 def process_complain_reason(message):
-    if message.text == "❌ Отмена":
+    if is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -292,7 +310,7 @@ def process_complain_reason(message):
 
 @bot.message_handler(state=UserStates.complain_evidence, content_types=['text', 'photo', 'document'])
 def process_complain_evidence(message):
-    if message.text and message.text == "❌ Отмена":
+    if message.text and is_cancel(message.text):
         cancel_action(message)
         return
     
@@ -334,13 +352,25 @@ def cancel(message):
         reply_markup=get_main_menu()
     )
 
+# ===== ОБРАБОТКА ВСЕХ ОСТАЛЬНЫХ СООБЩЕНИЙ =====
 @bot.message_handler(func=lambda msg: True)
 def echo_all(message):
-    bot.send_message(
-        message.chat.id,
-        "❗ Используйте кнопки меню или команду /start",
-        reply_markup=get_main_menu()
-    )
+    # Проверяем, есть ли активное состояние
+    state = bot.get_state(message.from_user.id, message.chat.id)
+    if state:
+        # Если есть состояние, но пользователь ввел что-то другое
+        bot.send_message(
+            message.chat.id,
+            "❗ Пожалуйста, следуйте инструкциям или нажмите ❌ Отмена",
+            reply_markup=get_cancel_menu()
+        )
+    else:
+        # Если нет состояния, показываем меню
+        bot.send_message(
+            message.chat.id,
+            "❗ Используйте кнопки меню или команду /start",
+            reply_markup=get_main_menu()
+        )
 
 # ===== ЗАПУСК БОТА =====
 def run_bot():
