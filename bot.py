@@ -10,7 +10,8 @@ import json
 
 # ===== НАСТРОЙКИ =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("CHANNEL_ID")
+CHANNEL_ID = os.environ.get("CHANNEL_ID")  # ID канала, куда приходят заявки
+ADMIN_IDS = [8718572838]  # Замените на ID админов
 
 if not BOT_TOKEN or not CHANNEL_ID:
     print("❌ Ошибка: BOT_TOKEN или CHANNEL_ID не заданы!")
@@ -30,23 +31,231 @@ def health():
 # ===== TELEGRAM BOT =====
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# ===== ХРАНИЛИЩЕ СОСТОЯНИЙ (в памяти) =====
-user_states = {}  # {user_id: {'state': 'helper_name', 'data': {...}}}
-user_data = {}    # {user_id: {'name': '...', 'age': '...', ...}}
+# ===== ХРАНИЛИЩЕ СОСТОЯНИЙ =====
+user_states = {}
+user_data = {}
+applications = {}  # {application_id: {'user_id': ..., 'type': ..., 'data': ...}}
 
-# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
-def send_to_channel(app_type, text, user_id, user_name=None):
+def get_state(user_id):
+    return user_states.get(str(user_id))
+
+def set_state(user_id, state):
+    user_states[str(user_id)] = state
+
+def clear_state(user_id):
+    if str(user_id) in user_states:
+        del user_states[str(user_id)]
+    if str(user_id) in user_data:
+        del user_data[str(user_id)]
+
+def get_data(user_id):
+    return user_data.get(str(user_id), {})
+
+def set_data(user_id, key, value):
+    if str(user_id) not in user_data:
+        user_data[str(user_id)] = {}
+    user_data[str(user_id)][key] = value
+
+def is_cancel(text):
+    return text and text in ["❌ Отмена", "Отмена", "/cancel"]
+
+# ===== ОТПРАВКА ЗАЯВКИ В КАНАЛ С КНОПКАМИ =====
+def send_application_to_channel(app_type, text, user_id, user_name=None):
     try:
+        # Генерируем уникальный ID заявки
+        app_id = int(time.time())
+        applications[app_id] = {
+            'user_id': user_id,
+            'type': app_type,
+            'data': text,
+            'status': 'pending',
+            'created_at': datetime.now().isoformat()
+        }
+        
         header = f"📩 НОВАЯ ЗАЯВКА: {app_type}\n"
+        header += f"🆔 Заявка: #{app_id}\n"
         header += f"👤 От: @{user_name or user_id}\n"
         header += f"🆔 ID: {user_id}\n"
         header += f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-        bot.send_message(CHANNEL_ID, header + text)
-        return True
+        
+        # Кнопки для управления заявкой
+        markup = types.InlineKeyboardMarkup(row_width=2)
+        btn_approve = types.InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{app_id}")
+        btn_reject = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{app_id}")
+        btn_take = types.InlineKeyboardButton("📌 Взять в работу", callback_data=f"take_{app_id}")
+        btn_close = types.InlineKeyboardButton("✅ Закрыть", callback_data=f"close_{app_id}")
+        markup.add(btn_approve, btn_reject, btn_take, btn_close)
+        
+        bot.send_message(CHANNEL_ID, header + text, reply_markup=markup)
+        return app_id
+    except Exception as e:
+        print(f"❌ Ошибка отправки в канал: {e}")
+        return None
+
+# ===== ОБРАБОТКА КНОПОК (callback) =====
+@bot.callback_query_handler(func=lambda call: True)
+def handle_callback(call):
+    # Проверяем, админ ли это
+    if call.from_user.id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "⛔ У вас нет прав администратора!", show_alert=True)
+        return
+    
+    data = call.data
+    action, app_id = data.split('_')
+    app_id = int(app_id)
+    
+    if app_id not in applications:
+        bot.answer_callback_query(call.id, "❌ Заявка не найдена!", show_alert=True)
+        return
+    
+    app = applications[app_id]
+    
+    # Меняем статус
+    if action == 'approve':
+        app['status'] = 'approved'
+        status_text = "✅ ОДОБРЕНА"
+        emoji = "✅"
+    elif action == 'reject':
+        app['status'] = 'rejected'
+        status_text = "❌ ОТКЛОНЕНА"
+        emoji = "❌"
+    elif action == 'take':
+        app['status'] = 'in_progress'
+        status_text = "📌 В РАБОТЕ"
+        emoji = "📌"
+    elif action == 'close':
+        app['status'] = 'closed'
+        status_text = "✅ ЗАКРЫТА"
+        emoji = "✅"
+    else:
+        bot.answer_callback_query(call.id, "❌ Неизвестное действие!")
+        return
+    
+    # Обновляем сообщение в канале
+    try:
+        # Редактируем текст, добавляя статус
+        old_text = call.message.text
+        new_text = f"{old_text}\n\n📌 СТАТУС: {status_text}\n👤 Админ: @{call.from_user.username or call.from_user.first_name}"
+        
+        # Убираем старые кнопки, добавляем новую кнопку "Статус"
+        markup = types.InlineKeyboardMarkup(row_width=1)
+        markup.add(types.InlineKeyboardButton(f"{emoji} {status_text}", callback_data="status"))
+        
+        bot.edit_message_text(
+            chat_id=call.message.chat.id,
+            message_id=call.message.message_id,
+            text=new_text,
+            reply_markup=markup
+        )
+        
+        # Уведомляем пользователя
+        user_id = app['user_id']
+        try:
+            if action == 'approve':
+                bot.send_message(
+                    user_id,
+                    f"✅ Ваша заявка #{app_id} ОДОБРЕНА!\n\nПоздравляем! Вы теперь часть команды VIBE RUSSIA! 🎉"
+                )
+            elif action == 'reject':
+                bot.send_message(
+                    user_id,
+                    f"❌ Ваша заявка #{app_id} ОТКЛОНЕНА.\n\nСвяжитесь с администрацией для уточнения причин."
+                )
+            elif action == 'take':
+                bot.send_message(
+                    user_id,
+                    f"📌 Ваша заявка #{app_id} ВЗЯТА В РАБОТУ!\n\nСкоро с вами свяжутся."
+                )
+            elif action == 'close':
+                bot.send_message(
+                    user_id,
+                    f"✅ Заявка #{app_id} ЗАКРЫТА.\n\nСпасибо за обращение! Если остались вопросы, напишите снова."
+                )
+        except:
+            pass
+        
+        bot.answer_callback_query(call.id, f"✅ Статус обновлен: {status_text}")
+        
     except Exception as e:
         print(f"❌ Ошибка: {e}")
-        return False
+        bot.answer_callback_query(call.id, f"❌ Ошибка: {e}")
 
+# ===== КОМАНДА /ADMIN =====
+@bot.message_handler(commands=['admin'])
+def admin_panel(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав администратора!")
+        return
+    
+    markup = types.InlineKeyboardMarkup(row_width=2)
+    btn_all = types.InlineKeyboardButton("📋 Все заявки", callback_data="admin_all")
+    btn_pending = types.InlineKeyboardButton("⏳ В ожидании", callback_data="admin_pending")
+    btn_stats = types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats")
+    markup.add(btn_all, btn_pending, btn_stats)
+    
+    bot.send_message(
+        message.chat.id,
+        "🔐 *Админ-панель*\n\nВыберите действие:",
+        parse_mode='Markdown',
+        reply_markup=markup
+    )
+
+@bot.callback_query_handler(func=lambda call: call.data.startswith('admin_'))
+def admin_callback(call):
+    if call.from_user.id not in ADMIN_IDS:
+        bot.answer_callback_query(call.id, "⛔ Нет прав!", show_alert=True)
+        return
+    
+    if call.data == 'admin_all':
+        if not applications:
+            bot.edit_message_text("📭 Нет заявок", call.message.chat.id, call.message.message_id)
+            return
+        
+        text = "📋 *ВСЕ ЗАЯВКИ*\n\n"
+        for app_id, app in list(applications.items())[-10:]:
+            status_emoji = {
+                'pending': '⏳',
+                'approved': '✅',
+                'rejected': '❌',
+                'in_progress': '📌',
+                'closed': '✅'
+            }.get(app.get('status', 'pending'), '❓')
+            
+            text += f"{status_emoji} #{app_id} | {app.get('type')}\n"
+            text += f"👤 {app.get('user_id')}\n"
+            text += f"📌 {app.get('status', 'pending')}\n\n"
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
+    elif call.data == 'admin_pending':
+        pending = {k: v for k, v in applications.items() if v.get('status') == 'pending'}
+        if not pending:
+            bot.edit_message_text("✅ Нет заявок в ожидании", call.message.chat.id, call.message.message_id)
+            return
+        
+        text = "⏳ *ЗАЯВКИ В ОЖИДАНИИ*\n\n"
+        for app_id, app in pending.items():
+            text += f"#{app_id} | {app.get('type')}\n"
+            text += f"👤 {app.get('user_id')}\n\n"
+        
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+    
+    elif call.data == 'admin_stats':
+        total = len(applications)
+        pending = len([a for a in applications.values() if a.get('status') == 'pending'])
+        approved = len([a for a in applications.values() if a.get('status') == 'approved'])
+        rejected = len([a for a in applications.values() if a.get('status') == 'rejected'])
+        
+        text = (
+            "📊 *СТАТИСТИКА*\n\n"
+            f"📋 Всего: {total}\n"
+            f"⏳ В ожидании: {pending}\n"
+            f"✅ Одобрено: {approved}\n"
+            f"❌ Отклонено: {rejected}\n"
+        )
+        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
+
+# ===== КНОПКИ МЕНЮ =====
 def get_main_menu():
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
     btn1 = types.KeyboardButton("🙋‍♂️ Стать Хелпером")
@@ -61,43 +270,12 @@ def get_cancel_menu():
     markup.add(types.KeyboardButton("❌ Отмена"))
     return markup
 
-def get_state(user_id):
-    """Получить текущее состояние пользователя"""
-    return user_states.get(str(user_id))
-
-def set_state(user_id, state):
-    """Установить состояние пользователя"""
-    user_states[str(user_id)] = state
-    if state not in user_data:
-        user_data[str(user_id)] = {}
-
-def clear_state(user_id):
-    """Очистить состояние пользователя"""
-    if str(user_id) in user_states:
-        del user_states[str(user_id)]
-    if str(user_id) in user_data:
-        del user_data[str(user_id)]
-
-def get_data(user_id):
-    """Получить данные пользователя"""
-    return user_data.get(str(user_id), {})
-
-def set_data(user_id, key, value):
-    """Установить данные пользователя"""
-    if str(user_id) not in user_data:
-        user_data[str(user_id)] = {}
-    user_data[str(user_id)][key] = value
-
-def is_cancel(text):
-    return text and text in ["❌ Отмена", "Отмена", "/cancel"]
-
-# ============================================
 # ===== КОМАНДЫ =====
-# ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
     clear_state(message.from_user.id)
     user_name = message.from_user.first_name
+    
     welcome_text = (
         f"🎮 *Добро пожаловать в VIBE RUSSIA!*\n\n"
         f"👋 Привет, {user_name}!\n"
@@ -108,6 +286,10 @@ def start(message):
         f"• ⚠️ Принимать жалобы на участников\n\n"
         f"👇 *Выбери нужный пункт в меню ниже:*"
     )
+    
+    if message.from_user.id in ADMIN_IDS:
+        welcome_text += "\n\n🔐 *Админ-панель:* /admin"
+    
     bot.send_message(
         message.chat.id,
         welcome_text,
@@ -115,34 +297,6 @@ def start(message):
         reply_markup=get_main_menu()
     )
 
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    help_text = (
-        "📖 *Помощь по боту VIBE RUSSIA*\n\n"
-        "🙋‍♂️ *Стать Хелпером* — заполни анкету\n"
-        "🛠 *Техподдержка* — сообщи о проблеме\n"
-        "⚠️ *Подать жалобу* — сообщи о нарушении\n\n"
-        "❌ *Отмена* — отменить текущее действие"
-    )
-    bot.send_message(
-        message.chat.id,
-        help_text,
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-@bot.message_handler(commands=['cancel'])
-def cancel(message):
-    clear_state(message.from_user.id)
-    bot.send_message(
-        message.chat.id,
-        "❌ Действие отменено.",
-        reply_markup=get_main_menu()
-    )
-
-# ============================================
-# ===== КНОПКИ МЕНЮ =====
-# ============================================
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
     set_state(message.from_user.id, 'helper_name')
@@ -200,16 +354,20 @@ def cancel_action(message):
         reply_markup=get_main_menu()
     )
 
-# ============================================
 # ===== ОБРАБОТКА СООБЩЕНИЙ ПО СОСТОЯНИЮ =====
-# ============================================
 @bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'document'])
 def handle_all_messages(message):
     user_id = str(message.from_user.id)
     state = get_state(user_id)
     
-    # Если нет состояния - показываем меню
     if not state:
+        if message.from_user.id in ADMIN_IDS and message.text == "/admin":
+            return
+        
+        # Проверяем, не нажата ли кнопка меню
+        if message.text in ["🙋‍♂️ Стать Хелпером", "🛠 Техподдержка", "⚠️ Подать жалобу", "ℹ️ О боте", "❌ Отмена"]:
+            return
+            
         bot.send_message(
             message.chat.id,
             "❗ Используйте кнопки меню или команду /start",
@@ -217,8 +375,7 @@ def handle_all_messages(message):
         )
         return
     
-    # Обработка отмены
-    if message.text and is_cancel(message.text):
+    if is_cancel(message.text):
         clear_state(user_id)
         bot.send_message(
             message.chat.id,
@@ -227,9 +384,7 @@ def handle_all_messages(message):
         )
         return
     
-    # ===== ОБРАБОТКА СОСТОЯНИЙ =====
-    
-    # ----- АНКЕТА ХЕЛПЕРА -----
+    # ===== АНКЕТА ХЕЛПЕРА =====
     if state == 'helper_name':
         set_data(user_id, 'name', message.text)
         set_state(user_id, 'helper_age')
@@ -277,7 +432,7 @@ def handle_all_messages(message):
             f"📱 *Контакт:* {data.get('contact')}"
         )
         user_name = message.from_user.username or message.from_user.first_name
-        send_to_channel("📋 ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
+        send_application_to_channel("📋 ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
         clear_state(user_id)
         bot.send_message(
             message.chat.id,
@@ -287,7 +442,7 @@ def handle_all_messages(message):
         )
         return
     
-    # ----- ТЕХПОДДЕРЖКА -----
+    # ===== ТЕХПОДДЕРЖКА =====
     if state == 'support_problem':
         if message.text:
             text = message.text
@@ -299,7 +454,7 @@ def handle_all_messages(message):
             text = "Сообщение без текста"
         
         user_name = message.from_user.username or message.from_user.first_name
-        send_to_channel("🔧 ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", f"📝 {text}", message.from_user.id, user_name)
+        send_application_to_channel("🔧 ТЕХПОДДЕРЖКА", f"📝 {text}", message.from_user.id, user_name)
         clear_state(user_id)
         bot.send_message(
             message.chat.id,
@@ -309,7 +464,7 @@ def handle_all_messages(message):
         )
         return
     
-    # ----- ЖАЛОБА -----
+    # ===== ЖАЛОБА =====
     if state == 'complain_against':
         set_data(user_id, 'against', message.text)
         set_state(user_id, 'complain_reason')
@@ -348,7 +503,7 @@ def handle_all_messages(message):
             f"📎 *Доказательства:* {data.get('evidence')}"
         )
         user_name = message.from_user.username or message.from_user.first_name
-        send_to_channel("⚠️ НОВАЯ ЖАЛОБА", text, message.from_user.id, user_name)
+        send_application_to_channel("⚠️ ЖАЛОБА", text, message.from_user.id, user_name)
         clear_state(user_id)
         bot.send_message(
             message.chat.id,
@@ -358,7 +513,6 @@ def handle_all_messages(message):
         )
         return
     
-    # Если состояние не распознано
     clear_state(user_id)
     bot.send_message(
         message.chat.id,
