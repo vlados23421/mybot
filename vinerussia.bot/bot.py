@@ -6,6 +6,8 @@ import os
 import time
 from datetime import datetime
 import logging
+from flask import Flask, request
+import threading
 
 # ===== НАСТРОЙКИ =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -19,7 +21,23 @@ if not BOT_TOKEN or not CHANNEL_ID:
     logger.error("❌ Ошибка: BOT_TOKEN или CHANNEL_ID не заданы!")
     exit(1)
 
-# Инициализация бота
+# ===== FLASK APP (для Web Service) =====
+app = Flask(__name__)
+
+@app.route('/')
+def home():
+    return "🤖 VIBE RUSSIA Bot is running!", 200
+
+@app.route('/health')
+def health():
+    return "OK", 200
+
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Обработка вебхуков (если нужно)"""
+    return "OK", 200
+
+# ===== TELEGRAM BOT =====
 state_storage = StateMemoryStorage()
 bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
 
@@ -50,7 +68,7 @@ def send_to_channel(app_type, text, user_id, user_name=None):
         logger.error(f"❌ Ошибка отправки в канал: {e}")
         return False
 
-def get_main_menu(user_id=None):
+def get_main_menu():
     """Создает главное меню с кнопками"""
     markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
     btn1 = types.KeyboardButton("🙋 Подать заявку на Хелпера")
@@ -69,7 +87,6 @@ def start(message):
         reply_markup=get_main_menu()
     )
 
-# ===== КОМАНДА /HELP =====
 @bot.message_handler(commands=['help'])
 def help_command(message):
     bot.send_message(
@@ -274,10 +291,10 @@ def echo_all(message):
         reply_markup=get_main_menu()
     )
 
-# ===== ЗАПУСК БОТА =====
-if __name__ == "__main__":
-    logger.info("🚀 Бот VIBE RUSSIA запущен (без базы данных)...")
-    
+# ===== ЗАПУСК БОТА В ОТДЕЛЬНОМ ПОТОКЕ =====
+def run_bot():
+    """Запускает бота в отдельном потоке"""
+    logger.info("🤖 Запуск Telegram бота...")
     while True:
         try:
             bot.infinity_polling(timeout=60, long_polling_timeout=60)
@@ -285,3 +302,17 @@ if __name__ == "__main__":
             logger.error(f"❌ Ошибка в polling: {e}")
             logger.info("🔄 Перезапуск через 5 секунд...")
             time.sleep(5)
+
+# ===== ГЛАВНЫЙ ЗАПУСК =====
+if __name__ == "__main__":
+    logger.info("🚀 Запуск VIBE RUSSIA Bot (Web Service)...")
+    
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot)
+    bot_thread.daemon = True
+    bot_thread.start()
+    
+    # Запускаем Flask сервер (для Render Web Service)
+    port = int(os.environ.get("PORT", 8080))
+    logger.info(f"🌐 Запуск Flask сервера на порту {port}")
+    app.run(host='0.0.0.0', port=port)
