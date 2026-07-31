@@ -1,13 +1,12 @@
 import telebot
 from telebot import types
-from telebot.handler_backends import State, StatesGroup
-from telebot.storage import StateMemoryStorage
 import os
 import time
 import logging
 from datetime import datetime
 from flask import Flask
 import threading
+import json
 
 # ===== НАСТРОЙКИ =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -29,19 +28,11 @@ def health():
     return "OK", 200
 
 # ===== TELEGRAM BOT =====
-state_storage = StateMemoryStorage()
-bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
+bot = telebot.TeleBot(BOT_TOKEN)
 
-# ===== СОСТОЯНИЯ =====
-class UserStates(StatesGroup):
-    helper_name = State()
-    helper_age = State()
-    helper_experience = State()
-    helper_contact = State()
-    support_problem = State()
-    complain_against = State()
-    complain_reason = State()
-    complain_evidence = State()
+# ===== ХРАНИЛИЩЕ СОСТОЯНИЙ (в памяти) =====
+user_states = {}  # {user_id: {'state': 'helper_name', 'data': {...}}}
+user_data = {}    # {user_id: {'name': '...', 'age': '...', ...}}
 
 # ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
 def send_to_channel(app_type, text, user_id, user_name=None):
@@ -70,6 +61,33 @@ def get_cancel_menu():
     markup.add(types.KeyboardButton("❌ Отмена"))
     return markup
 
+def get_state(user_id):
+    """Получить текущее состояние пользователя"""
+    return user_states.get(str(user_id))
+
+def set_state(user_id, state):
+    """Установить состояние пользователя"""
+    user_states[str(user_id)] = state
+    if state not in user_data:
+        user_data[str(user_id)] = {}
+
+def clear_state(user_id):
+    """Очистить состояние пользователя"""
+    if str(user_id) in user_states:
+        del user_states[str(user_id)]
+    if str(user_id) in user_data:
+        del user_data[str(user_id)]
+
+def get_data(user_id):
+    """Получить данные пользователя"""
+    return user_data.get(str(user_id), {})
+
+def set_data(user_id, key, value):
+    """Установить данные пользователя"""
+    if str(user_id) not in user_data:
+        user_data[str(user_id)] = {}
+    user_data[str(user_id)][key] = value
+
 def is_cancel(text):
     return text and text in ["❌ Отмена", "Отмена", "/cancel"]
 
@@ -78,6 +96,7 @@ def is_cancel(text):
 # ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
+    clear_state(message.from_user.id)
     user_name = message.from_user.first_name
     welcome_text = (
         f"🎮 *Добро пожаловать в VIBE RUSSIA!*\n\n"
@@ -114,7 +133,7 @@ def help_command(message):
 
 @bot.message_handler(commands=['cancel'])
 def cancel(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
+    clear_state(message.from_user.id)
     bot.send_message(
         message.chat.id,
         "❌ Действие отменено.",
@@ -126,7 +145,7 @@ def cancel(message):
 # ============================================
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
-    bot.set_state(message.from_user.id, UserStates.helper_name, message.chat.id)
+    set_state(message.from_user.id, 'helper_name')
     bot.send_message(
         message.chat.id,
         "📝 *Заявка на Хелпера*\n\nВведите ваши *Имя и Фамилию*:",
@@ -136,7 +155,7 @@ def start_helper(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "🛠 Техподдержка")
 def start_support(message):
-    bot.set_state(message.from_user.id, UserStates.support_problem, message.chat.id)
+    set_state(message.from_user.id, 'support_problem')
     bot.send_message(
         message.chat.id,
         "🔧 *Обращение в техподдержку*\n\nОпишите проблему. Можно приложить скриншот.",
@@ -146,7 +165,7 @@ def start_support(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ Подать жалобу")
 def start_complain(message):
-    bot.set_state(message.from_user.id, UserStates.complain_against, message.chat.id)
+    set_state(message.from_user.id, 'complain_against')
     bot.send_message(
         message.chat.id,
         "⚠️ *Подача жалобы*\n\nУкажите ник или ID человека:",
@@ -174,7 +193,7 @@ def about(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "❌ Отмена")
 def cancel_action(message):
-    bot.delete_state(message.from_user.id, message.chat.id)
+    clear_state(message.from_user.id)
     bot.send_message(
         message.chat.id,
         "❌ Действие отменено.",
@@ -182,130 +201,136 @@ def cancel_action(message):
     )
 
 # ============================================
-# ===== ОБРАБОТКА СОСТОЯНИЙ (ВСЕ ТИПЫ СООБЩЕНИЙ) =====
+# ===== ОБРАБОТКА СООБЩЕНИЙ ПО СОСТОЯНИЮ =====
 # ============================================
-
-# ----- АНКЕТА ХЕЛПЕРА -----
-@bot.message_handler(state=UserStates.helper_name, content_types=['text'])
-def process_helper_name(message):
-    if is_cancel(message.text):
-        cancel_action(message)
+@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'document'])
+def handle_all_messages(message):
+    user_id = str(message.from_user.id)
+    state = get_state(user_id)
+    
+    # Если нет состояния - показываем меню
+    if not state:
+        bot.send_message(
+            message.chat.id,
+            "❗ Используйте кнопки меню или команду /start",
+            reply_markup=get_main_menu()
+        )
         return
     
-    bot.send_message(message.chat.id, "📅 Введите *возраст*:", parse_mode='Markdown')
-    bot.set_state(message.from_user.id, UserStates.helper_age, message.chat.id)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['name'] = message.text
-
-@bot.message_handler(state=UserStates.helper_age, content_types=['text'])
-def process_helper_age(message):
-    if is_cancel(message.text):
-        cancel_action(message)
+    # Обработка отмены
+    if message.text and is_cancel(message.text):
+        clear_state(user_id)
+        bot.send_message(
+            message.chat.id,
+            "❌ Действие отменено.",
+            reply_markup=get_main_menu()
+        )
         return
     
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "⛔ Введите возраст *цифрами*:", parse_mode='Markdown')
+    # ===== ОБРАБОТКА СОСТОЯНИЙ =====
+    
+    # ----- АНКЕТА ХЕЛПЕРА -----
+    if state == 'helper_name':
+        set_data(user_id, 'name', message.text)
+        set_state(user_id, 'helper_age')
+        bot.send_message(
+            message.chat.id,
+            "📅 Введите *возраст*:",
+            parse_mode='Markdown'
+        )
         return
     
-    bot.send_message(message.chat.id, "💬 Расскажите о *опыте*:", parse_mode='Markdown')
-    bot.set_state(message.from_user.id, UserStates.helper_experience, message.chat.id)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['age'] = message.text
-
-@bot.message_handler(state=UserStates.helper_experience, content_types=['text'])
-def process_helper_experience(message):
-    if is_cancel(message.text):
-        cancel_action(message)
+    if state == 'helper_age':
+        if not message.text.isdigit():
+            bot.send_message(
+                message.chat.id,
+                "⛔ Введите возраст *цифрами*:",
+                parse_mode='Markdown'
+            )
+            return
+        set_data(user_id, 'age', message.text)
+        set_state(user_id, 'helper_experience')
+        bot.send_message(
+            message.chat.id,
+            "💬 Расскажите о *опыте*:",
+            parse_mode='Markdown'
+        )
         return
     
-    bot.send_message(message.chat.id, "📱 Оставьте *контакт* для связи:", parse_mode='Markdown')
-    bot.set_state(message.from_user.id, UserStates.helper_contact, message.chat.id)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['experience'] = message.text
-
-@bot.message_handler(state=UserStates.helper_contact, content_types=['text'])
-def process_helper_contact(message):
-    if is_cancel(message.text):
-        cancel_action(message)
+    if state == 'helper_experience':
+        set_data(user_id, 'experience', message.text)
+        set_state(user_id, 'helper_contact')
+        bot.send_message(
+            message.chat.id,
+            "📱 Оставьте *контакт* для связи:",
+            parse_mode='Markdown'
+        )
         return
     
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['contact'] = message.text
+    if state == 'helper_contact':
+        set_data(user_id, 'contact', message.text)
+        data = get_data(user_id)
         text = (
             f"👤 *Имя:* {data.get('name')}\n"
             f"📅 *Возраст:* {data.get('age')}\n"
             f"💬 *Опыт:* {data.get('experience')}\n"
             f"📱 *Контакт:* {data.get('contact')}"
         )
-    
-    user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("📋 ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
-    bot.delete_state(message.from_user.id, message.chat.id)
-    
-    bot.send_message(
-        message.chat.id,
-        "✅ *Заявка отправлена!*\n\nМы свяжемся с вами в ближайшее время.",
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-# ----- ТЕХПОДДЕРЖКА -----
-@bot.message_handler(state=UserStates.support_problem, content_types=['text', 'photo', 'document'])
-def process_support(message):
-    if message.text and is_cancel(message.text):
-        cancel_action(message)
+        user_name = message.from_user.username or message.from_user.first_name
+        send_to_channel("📋 ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
+        clear_state(user_id)
+        bot.send_message(
+            message.chat.id,
+            "✅ *Заявка отправлена!*\n\nМы свяжемся с вами в ближайшее время.",
+            parse_mode='Markdown',
+            reply_markup=get_main_menu()
+        )
         return
     
-    if message.text:
-        text = message.text
-    elif message.photo:
-        text = "🖼 Скриншот приложен"
-    elif message.document:
-        text = "📎 Файл приложен"
-    else:
-        text = "Сообщение без текста"
-    
-    user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("🔧 ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", f"📝 {text}", message.from_user.id, user_name)
-    bot.delete_state(message.from_user.id, message.chat.id)
-    
-    bot.send_message(
-        message.chat.id,
-        "✅ *Обращение отправлено!*\n\nТехподдержка свяжется с вами.",
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-# ----- ЖАЛОБА -----
-@bot.message_handler(state=UserStates.complain_against, content_types=['text'])
-def process_complain_against(message):
-    if is_cancel(message.text):
-        cancel_action(message)
+    # ----- ТЕХПОДДЕРЖКА -----
+    if state == 'support_problem':
+        if message.text:
+            text = message.text
+        elif message.photo:
+            text = "🖼 Скриншот приложен"
+        elif message.document:
+            text = "📎 Файл приложен"
+        else:
+            text = "Сообщение без текста"
+        
+        user_name = message.from_user.username or message.from_user.first_name
+        send_to_channel("🔧 ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", f"📝 {text}", message.from_user.id, user_name)
+        clear_state(user_id)
+        bot.send_message(
+            message.chat.id,
+            "✅ *Обращение отправлено!*\n\nТехподдержка свяжется с вами.",
+            parse_mode='Markdown',
+            reply_markup=get_main_menu()
+        )
         return
     
-    bot.send_message(message.chat.id, "📝 Опишите *причину* жалобы:", parse_mode='Markdown')
-    bot.set_state(message.from_user.id, UserStates.complain_reason, message.chat.id)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['against'] = message.text
-
-@bot.message_handler(state=UserStates.complain_reason, content_types=['text'])
-def process_complain_reason(message):
-    if is_cancel(message.text):
-        cancel_action(message)
+    # ----- ЖАЛОБА -----
+    if state == 'complain_against':
+        set_data(user_id, 'against', message.text)
+        set_state(user_id, 'complain_reason')
+        bot.send_message(
+            message.chat.id,
+            "📝 Опишите *причину* жалобы:",
+            parse_mode='Markdown'
+        )
         return
     
-    bot.send_message(message.chat.id, "📎 Приложите *доказательства* (скриншот) или напишите 'нет':", parse_mode='Markdown')
-    bot.set_state(message.from_user.id, UserStates.complain_evidence, message.chat.id)
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        data['reason'] = message.text
-
-@bot.message_handler(state=UserStates.complain_evidence, content_types=['text', 'photo', 'document'])
-def process_complain_evidence(message):
-    if message.text and is_cancel(message.text):
-        cancel_action(message)
+    if state == 'complain_reason':
+        set_data(user_id, 'reason', message.text)
+        set_state(user_id, 'complain_evidence')
+        bot.send_message(
+            message.chat.id,
+            "📎 Приложите *доказательства* (скриншот) или напишите 'нет':",
+            parse_mode='Markdown'
+        )
         return
     
-    with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
+    if state == 'complain_evidence':
         if message.text:
             evidence = message.text
         elif message.photo:
@@ -315,45 +340,31 @@ def process_complain_evidence(message):
         else:
             evidence = "Без доказательств"
         
-        data['evidence'] = evidence
+        set_data(user_id, 'evidence', evidence)
+        data = get_data(user_id)
         text = (
             f"👤 *Жалоба на:* {data.get('against')}\n"
             f"📝 *Причина:* {data.get('reason')}\n"
-            f"📎 *Доказательства:* {evidence}"
+            f"📎 *Доказательства:* {data.get('evidence')}"
         )
-    
-    user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("⚠️ НОВАЯ ЖАЛОБА", text, message.from_user.id, user_name)
-    bot.delete_state(message.from_user.id, message.chat.id)
-    
-    bot.send_message(
-        message.chat.id,
-        "✅ *Жалоба отправлена!*\n\nАдминистрация рассмотрит её.",
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-# ============================================
-# ===== ВСЕ ОСТАЛЬНЫЕ СООБЩЕНИЯ =====
-# ============================================
-@bot.message_handler(func=lambda msg: True)
-def echo_all(message):
-    # Проверяем, есть ли активное состояние
-    current_state = bot.get_state(message.from_user.id, message.chat.id)
-    if current_state:
-        # Если есть состояние, напоминаем пользователю
+        user_name = message.from_user.username or message.from_user.first_name
+        send_to_channel("⚠️ НОВАЯ ЖАЛОБА", text, message.from_user.id, user_name)
+        clear_state(user_id)
         bot.send_message(
             message.chat.id,
-            "❗ Пожалуйста, отвечайте на вопросы или нажмите ❌ Отмена",
-            reply_markup=get_cancel_menu()
-        )
-    else:
-        # Если нет состояния, показываем меню
-        bot.send_message(
-            message.chat.id,
-            "❗ Используйте кнопки меню или команду /start",
+            "✅ *Жалоба отправлена!*\n\nАдминистрация рассмотрит её.",
+            parse_mode='Markdown',
             reply_markup=get_main_menu()
         )
+        return
+    
+    # Если состояние не распознано
+    clear_state(user_id)
+    bot.send_message(
+        message.chat.id,
+        "❗ Что-то пошло не так. Начните заново с /start",
+        reply_markup=get_main_menu()
+    )
 
 # ===== ЗАПУСК =====
 def run_bot():
