@@ -73,7 +73,9 @@ def get_cancel_menu():
 def is_cancel(text):
     return text and text in ["❌ Отмена", "Отмена", "/cancel"]
 
+# ============================================
 # ===== КОМАНДЫ =====
+# ============================================
 @bot.message_handler(commands=['start'])
 def start(message):
     user_name = message.from_user.first_name
@@ -119,14 +121,15 @@ def cancel(message):
         reply_markup=get_main_menu()
     )
 
-# ===== КНОПКИ МЕНЮ =====
+# ============================================
+# ===== КНОПКИ МЕНЮ (УСТАНАВЛИВАЮТ СОСТОЯНИЕ) =====
+# ============================================
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
     bot.set_state(message.from_user.id, UserStates.helper_name, message.chat.id)
     bot.send_message(
         message.chat.id,
-        "📝 *Заявка на Хелпера*\n\n"
-        "Введите ваши *Имя и Фамилию*:",
+        "📝 *Заявка на Хелпера*\n\nВведите ваши *Имя и Фамилию*:",
         parse_mode='Markdown',
         reply_markup=get_cancel_menu()
     )
@@ -136,8 +139,7 @@ def start_support(message):
     bot.set_state(message.from_user.id, UserStates.support_problem, message.chat.id)
     bot.send_message(
         message.chat.id,
-        "🔧 *Обращение в техподдержку*\n\n"
-        "Опишите проблему. Можно приложить скриншот.",
+        "🔧 *Обращение в техподдержку*\n\nОпишите проблему. Можно приложить скриншот.",
         parse_mode='Markdown',
         reply_markup=get_cancel_menu()
     )
@@ -147,8 +149,7 @@ def start_complain(message):
     bot.set_state(message.from_user.id, UserStates.complain_against, message.chat.id)
     bot.send_message(
         message.chat.id,
-        "⚠️ *Подача жалобы*\n\n"
-        "Укажите ник или ID человека:",
+        "⚠️ *Подача жалобы*\n\nУкажите ник или ID человека:",
         parse_mode='Markdown',
         reply_markup=get_cancel_menu()
     )
@@ -181,7 +182,7 @@ def cancel_action(message):
     )
 
 # ============================================
-# ===== ОБРАБОТКА СОСТОЯНИЙ (САМЫЙ ВАЖНЫЙ) =====
+# ===== ОБРАБОТКА СОСТОЯНИЙ =====
 # ============================================
 
 # ----- АНКЕТА ХЕЛПЕРА -----
@@ -217,7 +218,7 @@ def process_helper_experience(message):
         cancel_action(message)
         return
     
-    bot.send_message(message.chat.id, "📱 Оставьте *контакт*:", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "📱 Оставьте *контакт* для связи:", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.helper_contact, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['experience'] = message.text
@@ -243,7 +244,7 @@ def process_helper_contact(message):
     
     bot.send_message(
         message.chat.id,
-        "✅ *Заявка отправлена!*\nМы свяжемся с вами.",
+        "✅ *Заявка отправлена!*\n\nМы свяжемся с вами в ближайшее время.",
         parse_mode='Markdown',
         reply_markup=get_main_menu()
     )
@@ -256,7 +257,7 @@ def process_support(message):
         return
     
     if message.text:
-        text = f"📝 {message.text}"
+        text = message.text
     elif message.photo:
         text = "🖼 Скриншот приложен"
     elif message.document:
@@ -265,12 +266,12 @@ def process_support(message):
         text = "Сообщение без текста"
     
     user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("🔧 ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", text, message.from_user.id, user_name)
+    send_to_channel("🔧 ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", f"📝 {text}", message.from_user.id, user_name)
     bot.delete_state(message.from_user.id, message.chat.id)
     
     bot.send_message(
         message.chat.id,
-        "✅ *Обращение отправлено!*",
+        "✅ *Обращение отправлено!*\n\nТехподдержка свяжется с вами.",
         parse_mode='Markdown',
         reply_markup=get_main_menu()
     )
@@ -282,7 +283,7 @@ def process_complain_against(message):
         cancel_action(message)
         return
     
-    bot.send_message(message.chat.id, "📝 Опишите *причину*:", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "📝 Опишите *причину* жалобы:", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.complain_reason, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['against'] = message.text
@@ -293,7 +294,7 @@ def process_complain_reason(message):
         cancel_action(message)
         return
     
-    bot.send_message(message.chat.id, "📎 Приложите *доказательства* или напишите 'нет':", parse_mode='Markdown')
+    bot.send_message(message.chat.id, "📎 Приложите *доказательства* (скриншот) или напишите 'нет':", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.complain_evidence, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['reason'] = message.text
@@ -327,7 +328,7 @@ def process_complain_evidence(message):
     
     bot.send_message(
         message.chat.id,
-        "✅ *Жалоба отправлена!*",
+        "✅ *Жалоба отправлена!*\n\nАдминистрация рассмотрит её.",
         parse_mode='Markdown',
         reply_markup=get_main_menu()
     )
@@ -337,20 +338,11 @@ def process_complain_evidence(message):
 # ============================================
 @bot.message_handler(func=lambda msg: True)
 def echo_all(message):
-    # Проверяем, есть ли активное состояние
-    state = bot.get_state(message.from_user.id, message.chat.id)
-    if state:
-        bot.send_message(
-            message.chat.id,
-            "❗ Пожалуйста, следуйте инструкциям или нажмите ❌ Отмена",
-            reply_markup=get_cancel_menu()
-        )
-    else:
-        bot.send_message(
-            message.chat.id,
-            "❗ Используйте кнопки меню или команду /start",
-            reply_markup=get_main_menu()
-        )
+    bot.send_message(
+        message.chat.id,
+        "❗ Используйте кнопки меню или команду /start",
+        reply_markup=get_main_menu()
+    )
 
 # ===== ЗАПУСК =====
 def run_bot():
