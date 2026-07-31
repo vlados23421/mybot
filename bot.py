@@ -3,9 +3,11 @@ from telebot import types
 from telebot.handler_backends import State, StatesGroup
 from telebot.storage import StateMemoryStorage
 import os
+import time
 import logging
 from datetime import datetime
 from flask import Flask, request
+import threading
 
 # ===== НАСТРОЙКИ =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -17,6 +19,14 @@ if not BOT_TOKEN or not CHANNEL_ID:
 
 # ===== FLASK APP =====
 app = Flask(__name__)
+
+@app.route('/')
+def index():
+    return "🤖 VIBE RUSSIA Bot is running!", 200
+
+@app.route('/health')
+def health():
+    return "OK", 200
 
 # ===== TELEGRAM BOT =====
 state_storage = StateMemoryStorage()
@@ -202,45 +212,26 @@ def echo_all(message):
         reply_markup=get_main_menu()
     )
 
-# ===== WEBHOOK =====
-@app.route('/', methods=['GET'])
-def index():
-    return "🤖 VIBE RUSSIA Bot is running!", 200
-
-@app.route('/' + BOT_TOKEN, methods=['POST'])
-def webhook():
-    if request.headers.get('content-type') == 'application/json':
-        json_string = request.get_data().decode('utf-8')
-        update = telebot.types.Update.de_json(json_string)
-        bot.process_new_updates([update])
-        return 'OK', 200
-    return 'Bad Request', 400
-
-# ===== НАСТРОЙКА ВЕБХУКА ПРИ ЗАПУСКЕ =====
-def setup_webhook():
-    """Устанавливает вебхук при запуске"""
-    webhook_url = f"https://mybot-qeun.onrender.com/{BOT_TOKEN}"
-    
-    # Удаляем старый вебхук
-    bot.remove_webhook()
-    
-    # Устанавливаем новый
-    result = bot.set_webhook(url=webhook_url)
-    
-    if result:
-        print(f"✅ Webhook успешно установлен: {webhook_url}")
-    else:
-        print(f"❌ Ошибка установки webhook: {webhook_url}")
-    
-    return result
+# ===== ЗАПУСК БОТА В ОТДЕЛЬНОМ ПОТОКЕ =====
+def run_bot():
+    """Запускает бота в режиме polling"""
+    print("🤖 Запуск Telegram бота (polling)...")
+    while True:
+        try:
+            bot.infinity_polling(timeout=60)
+        except Exception as e:
+            print(f"❌ Ошибка в polling: {e}")
+            time.sleep(5)
 
 # ===== ГЛАВНЫЙ ЗАПУСК =====
 if __name__ == "__main__":
     print("🚀 Запуск VIBE RUSSIA Bot...")
     
-    # Настраиваем вебхук
-    setup_webhook()
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
     
+    # Запускаем Flask для пинга
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 Запуск Flask сервера на порту {port}")
     app.run(host='0.0.0.0', port=port)
