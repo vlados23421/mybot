@@ -13,7 +13,7 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 # ⚠️ ВСТАВЬТЕ СВОЙ ID СЮДА!
-ADMIN_IDS = [123456789]  # Ваш ID из @userinfobot
+ADMIN_IDS = [8718572838]  # Ваш ID из @userinfobot
 
 # Версия бота
 BOT_VERSION = "2.5.0"
