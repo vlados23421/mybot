@@ -3,7 +3,7 @@ from telebot import types
 import os
 import time
 import logging
-from datetime import datetime
+from datetime import datetime, timedelta
 from flask import Flask
 import threading
 import json
@@ -13,10 +13,10 @@ BOT_TOKEN = os.environ.get("BOT_TOKEN")
 CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 # ⚠️ ВСТАВЬТЕ СВОЙ ID СЮДА!
-ADMIN_IDS = [8718572838]  # Ваш ID из @userinfobot
+ADMIN_IDS = [123456789]  # Ваш ID из @userinfobot
 
-# Версия бота (меняется через админ-панель)
-BOT_VERSION = "2.0.0"
+# Версия бота
+BOT_VERSION = "2.5.0"
 
 if not BOT_TOKEN or not CHANNEL_ID:
     print("❌ Ошибка: BOT_TOKEN или CHANNEL_ID не заданы!")
@@ -40,7 +40,25 @@ bot = telebot.TeleBot(BOT_TOKEN)
 user_states = {}
 user_data = {}
 applications = {}
-users = {}  # {user_id: {'first_seen': ..., 'last_seen': ...}}
+users = {}  # {user_id: {'first_seen': ..., 'last_seen': ..., 'username': ...}}
+user_profile = {}  # {user_id: {'registered': ..., 'apps_count': 0, 'bonus': 0}}
+user_bonus = {}  # {user_id: {'last_bonus': '2026-07-31', 'streak': 0}}
+BANNED_USERS = []  # Список забаненных
+
+# ===== АВТО-ОТВЕТЫ =====
+AUTO_REPLIES = {
+    "привет": "👋 Привет! Чем могу помочь? Напиши /start",
+    "прив": "👋 Привет! Чем могу помочь? Напиши /start",
+    "здарова": "👋 Привет! Чем могу помочь? Напиши /start",
+    "как играть": "🎮 Инструкция по играм:\n1. Нажми /start\n2. Выбери игру\n3. Следуй инструкциям",
+    "помощь": "🆘 Чем помочь? Напиши /help или /start",
+    "хелп": "🆘 Чем помочь? Напиши /help или /start",
+    "правила": "📋 Правила проекта:\n1. Будь вежлив\n2. Не спамь\n3. Уважай других игроков",
+    "контакты": "📱 Связь с нами:\n• @vibe_support\n• support@viberussia.com",
+    "поддержка": "🛠 Техподдержка: @vibe_support\nИли нажми кнопку 'Техподдержка'",
+    "спасибо": "😊 Пожалуйста! Всегда рад помочь!",
+    "спс": "😊 Пожалуйста! Всегда рад помочь!",
+}
 
 # ===== ФУНКЦИИ =====
 def get_state(user_id):
@@ -72,7 +90,9 @@ def get_main_menu():
     btn2 = types.KeyboardButton("🛠 Техподдержка")
     btn3 = types.KeyboardButton("⚠️ Подать жалобу")
     btn4 = types.KeyboardButton("ℹ️ О боте")
-    markup.add(btn1, btn2, btn3, btn4)
+    btn5 = types.KeyboardButton("👤 Мой профиль")
+    btn6 = types.KeyboardButton("🏆 Топ игроков")
+    markup.add(btn1, btn2, btn3, btn4, btn5, btn6)
     return markup
 
 def get_cancel_menu():
@@ -84,11 +104,19 @@ def save_user(user_id, username=None):
     """Сохраняет информацию о пользователе"""
     user_id = str(user_id)
     now = datetime.now().isoformat()
+    
     if user_id not in users:
         users[user_id] = {
             'first_seen': now,
             'username': username,
             'last_seen': now
+        }
+        # Создаём профиль
+        user_profile[user_id] = {
+            'registered': now,
+            'apps_count': 0,
+            'bonus': 0,
+            'last_bonus': None
         }
     else:
         users[user_id]['last_seen'] = now
@@ -98,6 +126,12 @@ def save_user(user_id, username=None):
 def send_application_to_channel(app_type, text, user_id, user_name=None):
     try:
         app_id = int(time.time())
+        
+        # Увеличиваем счётчик заявок пользователя
+        user_id_str = str(user_id)
+        if user_id_str in user_profile:
+            user_profile[user_id_str]['apps_count'] += 1
+        
         applications[app_id] = {
             'user_id': user_id,
             'type': app_type,
@@ -125,6 +159,18 @@ def send_application_to_channel(app_type, text, user_id, user_name=None):
         print(f"❌ Ошибка: {e}")
         return None
 
+def notify_user(user_id, message_text):
+    """Отправляет уведомление пользователю"""
+    try:
+        bot.send_message(
+            user_id,
+            f"📢 *Уведомление от VIBE RUSSIA*\n\n{message_text}",
+            parse_mode='Markdown'
+        )
+        return True
+    except:
+        return False
+
 def notify_all_users(message_text):
     """Отправляет уведомление всем пользователям"""
     count = 0
@@ -136,7 +182,7 @@ def notify_all_users(message_text):
                 parse_mode='Markdown'
             )
             count += 1
-            time.sleep(0.1)  # Чтобы не заблокировали
+            time.sleep(0.1)
         except:
             pass
     return count
@@ -148,6 +194,11 @@ def notify_all_users(message_text):
 @bot.callback_query_handler(func=lambda call: True)
 def handle_all_callbacks(call):
     user_id = call.from_user.id
+    
+    # Проверка бана
+    if user_id in BANNED_USERS:
+        bot.answer_callback_query(call.id, "⛔ Вы заблокированы!")
+        return
     
     if not call.data.startswith('status'):
         if user_id not in ADMIN_IDS:
@@ -192,6 +243,7 @@ def handle_all_callbacks(call):
         approved = len([a for a in applications.values() if a.get('status') == 'approved'])
         rejected = len([a for a in applications.values() if a.get('status') == 'rejected'])
         in_progress = len([a for a in applications.values() if a.get('status') == 'in_progress'])
+        banned = len(BANNED_USERS)
         
         text = (
             "📊 *СТАТИСТИКА*\n\n"
@@ -200,7 +252,8 @@ def handle_all_callbacks(call):
             f"📌 В работе: {in_progress}\n"
             f"✅ Одобрено: {approved}\n"
             f"❌ Отклонено: {rejected}\n"
-            f"👥 Всего пользователей: {len(users)}\n\n"
+            f"👥 Всего пользователей: {len(users)}\n"
+            f"🚫 Забанено: {banned}\n\n"
             f"🤖 Версия бота: v{BOT_VERSION}"
         )
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
@@ -297,6 +350,7 @@ def handle_all_callbacks(call):
                 reply_markup=markup
             )
             
+            # Уведомляем пользователя
             try:
                 bot.send_message(app['user_id'], user_text)
             except:
@@ -319,11 +373,15 @@ def handle_all_callbacks(call):
 
 @bot.message_handler(commands=['start'])
 def start(message):
+    # Проверка бана
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы в этом боте!")
+        return
+    
     clear_state(message.from_user.id)
     user_name = message.from_user.first_name
     username = message.from_user.username
     
-    # Сохраняем пользователя
     save_user(message.from_user.id, username)
     
     welcome_text = (
@@ -333,7 +391,9 @@ def start(message):
         f"📌 *Что я умею:*\n"
         f"• 🙋‍♂️ Принимать заявки на Хелпера\n"
         f"• 🛠 Принимать обращения в техподдержку\n"
-        f"• ⚠️ Принимать жалобы на участников\n\n"
+        f"• ⚠️ Принимать жалобы на участников\n"
+        f"• 👤 Показывать твой профиль\n"
+        f"• 🏆 Показывать топ игроков\n\n"
         f"👇 *Выбери нужный пункт в меню ниже:*"
     )
     
@@ -345,6 +405,175 @@ def start(message):
         welcome_text,
         parse_mode='Markdown',
         reply_markup=get_main_menu()
+    )
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    help_text = (
+        "📖 *Помощь по боту VIBE RUSSIA*\n\n"
+        "📌 *Основные команды:*\n"
+        "• /start — начать работу\n"
+        "• /help — эта справка\n"
+        "• /profile — мой профиль\n"
+        "• /top — топ игроков\n"
+        "• /bonus — получить бонус\n\n"
+        "📌 *Кнопки меню:*\n"
+        "• 🙋‍♂️ Стать Хелпером\n"
+        "• 🛠 Техподдержка\n"
+        "• ⚠️ Подать жалобу\n\n"
+        "❌ *Отмена* — отменить текущее действие"
+    )
+    bot.send_message(
+        message.chat.id,
+        help_text,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
+
+@bot.message_handler(commands=['profile'])
+def profile_command(message):
+    """Личный кабинет пользователя"""
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
+    
+    user_id = str(message.from_user.id)
+    
+    # Получаем профиль
+    profile = user_profile.get(user_id, {'registered': 'Неизвестно', 'apps_count': 0, 'bonus': 0})
+    
+    # Считаем заявки пользователя
+    user_apps = [app for app in applications.values() if str(app.get('user_id')) == user_id]
+    total_apps = len(user_apps)
+    pending = len([a for a in user_apps if a.get('status') == 'pending'])
+    approved = len([a for a in user_apps if a.get('status') == 'approved'])
+    rejected = len([a for a in user_apps if a.get('status') == 'rejected'])
+    in_progress = len([a for a in user_apps if a.get('status') == 'in_progress'])
+    
+    # Бонусы
+    bonus_info = user_bonus.get(user_id, {})
+    streak = bonus_info.get('streak', 0)
+    
+    profile_text = (
+        f"👤 *Личный кабинет*\n\n"
+        f"🆔 ID: {message.from_user.id}\n"
+        f"📛 Имя: {message.from_user.first_name}\n"
+        f"📛 Юзернейм: @{message.from_user.username or 'Нет'}\n"
+        f"📅 Дата регистрации: {profile.get('registered', 'Неизвестно')[:10]}\n"
+        f"💰 Бонусов: {profile.get('bonus', 0)}\n"
+        f"🔥 Серия дней: {streak}\n\n"
+        f"📊 *Мои заявки:*\n"
+        f"• Всего: {total_apps}\n"
+        f"• ⏳ В ожидании: {pending}\n"
+        f"• 📌 В работе: {in_progress}\n"
+        f"• ✅ Одобрено: {approved}\n"
+        f"• ❌ Отклонено: {rejected}\n"
+    )
+    
+    bot.send_message(
+        message.chat.id,
+        profile_text,
+        parse_mode='Markdown'
+    )
+
+@bot.message_handler(commands=['top'])
+def top_command(message):
+    """Топ-10 пользователей по заявкам"""
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
+    
+    # Считаем заявки по пользователям
+    user_apps_count = {}
+    for app in applications.values():
+        user_id = str(app.get('user_id'))
+        if user_id not in user_apps_count:
+            user_apps_count[user_id] = 0
+        user_apps_count[user_id] += 1
+    
+    # Сортируем
+    sorted_users = sorted(user_apps_count.items(), key=lambda x: x[1], reverse=True)[:10]
+    
+    if not sorted_users:
+        bot.send_message(
+            message.chat.id,
+            "📭 *Пока нет заявок*\n\nСтань первым, кто подаст заявку!",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Формируем топ
+    text = "🏆 *ТОП-10 ИГРОКОВ*\n\n"
+    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
+    
+    for i, (user_id, count) in enumerate(sorted_users):
+        # Пытаемся получить имя пользователя
+        user_info = users.get(user_id, {})
+        username = user_info.get('username', user_id)
+        if username:
+            username = f"@{username}"
+        else:
+            username = f"ID: {user_id}"
+        
+        medal = medals[i] if i < len(medals) else f"{i+1}."
+        text += f"{medal} {username} — {count} заявок\n"
+    
+    bot.send_message(
+        message.chat.id,
+        text,
+        parse_mode='Markdown'
+    )
+
+@bot.message_handler(commands=['bonus'])
+def bonus_command(message):
+    """Ежедневный бонус"""
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
+    
+    user_id = str(message.from_user.id)
+    today = datetime.now().strftime('%Y-%m-%d')
+    
+    # Инициализация
+    if user_id not in user_bonus:
+        user_bonus[user_id] = {'last_bonus': None, 'streak': 0}
+    
+    # Проверяем, получал ли уже сегодня
+    if user_bonus[user_id]['last_bonus'] == today:
+        bot.send_message(
+            message.chat.id,
+            "⏳ *Ты уже получил бонус сегодня!*\n\n"
+            "Приходи завтра за новым бонусом! 🌟",
+            parse_mode='Markdown'
+        )
+        return
+    
+    # Считаем бонус
+    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
+    if user_bonus[user_id]['last_bonus'] == yesterday:
+        user_bonus[user_id]['streak'] += 1
+    else:
+        user_bonus[user_id]['streak'] = 1
+    
+    user_bonus[user_id]['last_bonus'] = today
+    
+    # Бонус растёт с серией
+    base_bonus = 10
+    streak_bonus = user_bonus[user_id]['streak'] * 2
+    total_bonus = base_bonus + streak_bonus
+    
+    # Сохраняем в профиль
+    if user_id in user_profile:
+        user_profile[user_id]['bonus'] = user_profile[user_id].get('bonus', 0) + total_bonus
+    
+    bot.send_message(
+        message.chat.id,
+        f"🎁 *Ежедневный бонус!*\n\n"
+        f"💰 Ты получил *{total_bonus} монет*!\n"
+        f"🔥 Серия: *{user_bonus[user_id]['streak']} дней*\n"
+        f"📅 Приходи завтра за новым бонусом!\n\n"
+        f"💡 *Бонус растёт с каждым днём!*",
+        parse_mode='Markdown'
     )
 
 @bot.message_handler(commands=['admin'])
@@ -363,29 +592,31 @@ def admin_panel(message):
     
     bot.send_message(
         message.chat.id,
-        f"🔐 *Админ-панель*\n\n🤖 Версия: v{BOT_VERSION}\n👥 Пользователей: {len(users)}\n\nВыберите действие:",
+        f"🔐 *Админ-панель*\n\n"
+        f"🤖 Версия: v{BOT_VERSION}\n"
+        f"👥 Пользователей: {len(users)}\n"
+        f"🚫 Забанено: {len(BANNED_USERS)}\n\n"
+        f"Выберите действие:",
         parse_mode='Markdown',
         reply_markup=markup
     )
 
 @bot.message_handler(commands=['setversion'])
 def set_version(message):
-    """Команда для смены версии бота (только для админов)"""
     if message.from_user.id not in ADMIN_IDS:
         bot.reply_to(message, "⛔ У вас нет прав администратора!")
         return
     
     global BOT_VERSION
     
-    # Разбираем команду: /setversion 2.1.0
     args = message.text.split()
     if len(args) < 2:
         bot.reply_to(
             message,
             f"📌 *Текущая версия:* v{BOT_VERSION}\n\n"
-            "📝 *Как изменить:*\n"
-            "`/setversion 2.1.0`\n\n"
-            "💡 *Пример:* `/setversion 3.0.0`",
+            f"📝 *Как изменить:*\n"
+            f"`/setversion 2.1.0`\n\n"
+            f"💡 *Пример:* `/setversion 3.0.0`",
             parse_mode='Markdown'
         )
         return
@@ -394,14 +625,14 @@ def set_version(message):
     old_version = BOT_VERSION
     BOT_VERSION = new_version
     
-    # Отправляем уведомление всем пользователям
     notify_text = (
         f"🔄 *Обновление бота!*\n\n"
         f"Бот VIBE RUSSIA обновлён до версии *v{new_version}*\n\n"
         f"📌 *Что нового:*\n"
         f"• Улучшена стабильность\n"
-        f"• Исправлены мелкие баги\n"
-        f"• Добавлены новые функции\n\n"
+        f"• Добавлен личный кабинет\n"
+        f"• Добавлен топ игроков\n"
+        f"• Добавлены ежедневные бонусы\n\n"
         f"Спасибо, что вы с нами! ❤️"
     )
     
@@ -417,8 +648,61 @@ def set_version(message):
         parse_mode='Markdown'
     )
 
+@bot.message_handler(commands=['ban'])
+def ban_user(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Используйте: /ban ID причина")
+        return
+    try:
+        user_id = int(args[1])
+    except:
+        bot.reply_to(message, "❌ ID должен быть числом!")
+        return
+    reason = " ".join(args[2:]) if len(args) > 2 else "Без причины"
+    
+    if user_id in BANNED_USERS:
+        bot.reply_to(message, f"⚠️ Пользователь {user_id} уже забанен")
+        return
+    
+    BANNED_USERS.append(user_id)
+    bot.reply_to(message, f"✅ Пользователь {user_id} забанен!\nПричина: {reason}")
+    try:
+        bot.send_message(user_id, f"⛔ Вы заблокированы!\nПричина: {reason}")
+    except:
+        pass
+
+@bot.message_handler(commands=['unban'])
+def unban_user(message):
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(message, "❌ Используйте: /unban ID")
+        return
+    try:
+        user_id = int(args[1])
+    except:
+        bot.reply_to(message, "❌ ID должен быть числом!")
+        return
+    
+    if user_id in BANNED_USERS:
+        BANNED_USERS.remove(user_id)
+        bot.reply_to(message, f"✅ Пользователь {user_id} разбанен!")
+    else:
+        bot.reply_to(message, f"⚠️ Пользователь {user_id} не в черном списке")
+
+# ============================================
+# ===== КНОПКИ МЕНЮ =====
+# ============================================
+
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
     set_state(message.from_user.id, 'helper_name')
     bot.send_message(
         message.chat.id,
@@ -429,6 +713,9 @@ def start_helper(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "🛠 Техподдержка")
 def start_support(message):
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
     set_state(message.from_user.id, 'support_problem')
     bot.send_message(
         message.chat.id,
@@ -439,6 +726,9 @@ def start_support(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ Подать жалобу")
 def start_complain(message):
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
     set_state(message.from_user.id, 'complain_against')
     bot.send_message(
         message.chat.id,
@@ -449,6 +739,9 @@ def start_complain(message):
 
 @bot.message_handler(func=lambda msg: msg.text == "ℹ️ О боте")
 def about(message):
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
+        return
     about_text = (
         "🤖 *VIBE RUSSIA Bot*\n\n"
         f"📌 *Версия:* v{BOT_VERSION}\n"
@@ -457,7 +750,8 @@ def about(message):
         "• Прием заявок на Хелперов\n"
         "• Обработка обращений в техподдержку\n"
         "• Прием жалоб\n\n"
-        f"👥 *Всего пользователей:* {len(users)}\n\n"
+        f"👥 *Всего пользователей:* {len(users)}\n"
+        f"🚫 *Забанено:* {len(BANNED_USERS)}\n\n"
         "💡 *Разработано для VIBE RUSSIA*\n"
         "❤️ Спасибо, что вы с нами!"
     )
@@ -467,6 +761,14 @@ def about(message):
         parse_mode='Markdown',
         reply_markup=get_main_menu()
     )
+
+@bot.message_handler(func=lambda msg: msg.text == "👤 Мой профиль")
+def profile_button(message):
+    profile_command(message)
+
+@bot.message_handler(func=lambda msg: msg.text == "🏆 Топ игроков")
+def top_button(message):
+    top_command(message)
 
 @bot.message_handler(func=lambda msg: msg.text == "❌ Отмена")
 def cancel_action(message):
@@ -478,23 +780,40 @@ def cancel_action(message):
     )
 
 # ============================================
+# ===== АВТО-ОТВЕТЫ =====
+# ============================================
+
+@bot.message_handler(func=lambda msg: msg.text and msg.text.lower() in AUTO_REPLIES)
+def auto_reply(message):
+    if message.from_user.id in BANNED_USERS:
+        return
+    reply = AUTO_REPLIES.get(message.text.lower())
+    if reply:
+        bot.reply_to(message, reply)
+
+# ============================================
 # ===== ОБРАБОТКА СООБЩЕНИЙ =====
 # ============================================
 
 @bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'document'])
 def handle_all_messages(message):
     user_id = str(message.from_user.id)
+    
+    # Проверка бана
+    if message.from_user.id in BANNED_USERS:
+        bot.send_message(message.chat.id, "⛔ Вы заблокированы в этом боте!")
+        return
+    
     state = get_state(user_id)
     
-    # Сохраняем пользователя
     save_user(message.from_user.id, message.from_user.username)
     
     if not state:
-        if message.text in ["🙋‍♂️ Стать Хелпером", "🛠 Техподдержка", "⚠️ Подать жалобу", "ℹ️ О боте", "❌ Отмена"]:
+        if message.text in ["🙋‍♂️ Стать Хелпером", "🛠 Техподдержка", "⚠️ Подать жалобу", "ℹ️ О боте", "👤 Мой профиль", "🏆 Топ игроков", "❌ Отмена"]:
             return
         
         # Проверяем команды админа
-        if message.text and message.text.startswith('/setversion'):
+        if message.text and message.text.startswith('/'):
             return
         
         bot.send_message(
