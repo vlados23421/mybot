@@ -122,7 +122,7 @@ def cancel(message):
     )
 
 # ============================================
-# ===== КНОПКИ МЕНЮ (УСТАНАВЛИВАЮТ СОСТОЯНИЕ) =====
+# ===== КНОПКИ МЕНЮ =====
 # ============================================
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
@@ -182,11 +182,11 @@ def cancel_action(message):
     )
 
 # ============================================
-# ===== ОБРАБОТКА СОСТОЯНИЙ =====
+# ===== ОБРАБОТКА СОСТОЯНИЙ (ВСЕ ТИПЫ СООБЩЕНИЙ) =====
 # ============================================
 
 # ----- АНКЕТА ХЕЛПЕРА -----
-@bot.message_handler(state=UserStates.helper_name)
+@bot.message_handler(state=UserStates.helper_name, content_types=['text'])
 def process_helper_name(message):
     if is_cancel(message.text):
         cancel_action(message)
@@ -197,7 +197,7 @@ def process_helper_name(message):
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['name'] = message.text
 
-@bot.message_handler(state=UserStates.helper_age)
+@bot.message_handler(state=UserStates.helper_age, content_types=['text'])
 def process_helper_age(message):
     if is_cancel(message.text):
         cancel_action(message)
@@ -212,7 +212,7 @@ def process_helper_age(message):
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['age'] = message.text
 
-@bot.message_handler(state=UserStates.helper_experience)
+@bot.message_handler(state=UserStates.helper_experience, content_types=['text'])
 def process_helper_experience(message):
     if is_cancel(message.text):
         cancel_action(message)
@@ -223,7 +223,7 @@ def process_helper_experience(message):
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['experience'] = message.text
 
-@bot.message_handler(state=UserStates.helper_contact)
+@bot.message_handler(state=UserStates.helper_contact, content_types=['text'])
 def process_helper_contact(message):
     if is_cancel(message.text):
         cancel_action(message)
@@ -277,7 +277,7 @@ def process_support(message):
     )
 
 # ----- ЖАЛОБА -----
-@bot.message_handler(state=UserStates.complain_against)
+@bot.message_handler(state=UserStates.complain_against, content_types=['text'])
 def process_complain_against(message):
     if is_cancel(message.text):
         cancel_action(message)
@@ -288,7 +288,7 @@ def process_complain_against(message):
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['against'] = message.text
 
-@bot.message_handler(state=UserStates.complain_reason)
+@bot.message_handler(state=UserStates.complain_reason, content_types=['text'])
 def process_complain_reason(message):
     if is_cancel(message.text):
         cancel_action(message)
@@ -338,11 +338,22 @@ def process_complain_evidence(message):
 # ============================================
 @bot.message_handler(func=lambda msg: True)
 def echo_all(message):
-    bot.send_message(
-        message.chat.id,
-        "❗ Используйте кнопки меню или команду /start",
-        reply_markup=get_main_menu()
-    )
+    # Проверяем, есть ли активное состояние
+    current_state = bot.get_state(message.from_user.id, message.chat.id)
+    if current_state:
+        # Если есть состояние, напоминаем пользователю
+        bot.send_message(
+            message.chat.id,
+            "❗ Пожалуйста, отвечайте на вопросы или нажмите ❌ Отмена",
+            reply_markup=get_cancel_menu()
+        )
+    else:
+        # Если нет состояния, показываем меню
+        bot.send_message(
+            message.chat.id,
+            "❗ Используйте кнопки меню или команду /start",
+            reply_markup=get_main_menu()
+        )
 
 # ===== ЗАПУСК =====
 def run_bot():
