@@ -6,7 +6,7 @@ import os
 import time
 import logging
 from datetime import datetime
-from flask import Flask, request
+from flask import Flask
 import threading
 
 # ===== НАСТРОЙКИ =====
@@ -57,49 +57,100 @@ def send_to_channel(app_type, text, user_id, user_name=None):
         return False
 
 def get_main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    btn1 = types.KeyboardButton("🙋 Подать заявку на Хелпера")
-    btn2 = types.KeyboardButton("🛠 Обратиться в техподдержку")
+    """Красивое меню с эмодзи"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
+    btn1 = types.KeyboardButton("🙋‍♂️ Стать Хелпером")
+    btn2 = types.KeyboardButton("🛠 Техподдержка")
     btn3 = types.KeyboardButton("⚠️ Подать жалобу")
-    markup.add(btn1, btn2, btn3)
+    btn4 = types.KeyboardButton("ℹ️ О боте")
+    markup.add(btn1, btn2, btn3, btn4)
+    return markup
+
+def get_cancel_menu():
+    """Кнопка отмены"""
+    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
+    markup.add(types.KeyboardButton("❌ Отмена"))
     return markup
 
 # ===== КОМАНДЫ =====
 @bot.message_handler(commands=['start'])
 def start(message):
+    """Приветственное сообщение с красивым оформлением"""
+    user_name = message.from_user.first_name
+    welcome_text = (
+        f"🎮 *Добро пожаловать в VIBE RUSSIA!*\n\n"
+        f"👋 Привет, {user_name}!\n"
+        f"Я помогу тебе взаимодействовать с командой проекта.\n\n"
+        f"📌 *Что я умею:*\n"
+        f"• 🙋‍♂️ Принимать заявки на Хелпера\n"
+        f"• 🛠 Принимать обращения в техподдержку\n"
+        f"• ⚠️ Принимать жалобы на участников\n\n"
+        f"👇 *Выбери нужный пункт в меню ниже:*"
+    )
     bot.send_message(
         message.chat.id,
-        "👋 Добро пожаловать в VIBE RUSSIA!\nВыберите нужный пункт меню:",
+        welcome_text,
+        parse_mode='Markdown',
         reply_markup=get_main_menu()
     )
 
 @bot.message_handler(commands=['help'])
 def help_command(message):
+    help_text = (
+        "📖 *Помощь по боту VIBE RUSSIA*\n\n"
+        "🙋‍♂️ *Стать Хелпером* — заполни анкету для вступления в команду\n"
+        "🛠 *Техподдержка* — сообщи о проблеме или ошибке\n"
+        "⚠️ *Подать жалобу* — сообщи о нарушении правил\n\n"
+        "❌ *Отмена* — отменить текущее действие\n\n"
+        "Все заявки отправляются администрации проекта."
+    )
     bot.send_message(
         message.chat.id,
-        "📖 Помощь по боту VIBE RUSSIA\n\n"
-        "🙋 Подать заявку на Хелпера\n"
-        "🛠 Обратиться в техподдержку\n"
-        "⚠️ Подать жалобу",
+        help_text,
+        parse_mode='Markdown',
         reply_markup=get_main_menu()
     )
 
-@bot.message_handler(func=lambda msg: msg.text == "🙋 Подать заявку на Хелпера")
+@bot.message_handler(func=lambda msg: msg.text == "ℹ️ О боте")
+def about(message):
+    about_text = (
+        "🤖 *VIBE RUSSIA Bot*\n\n"
+        "Версия: 2.0\n"
+        "Разработан для проекта VIBE RUSSIA\n\n"
+        "📌 *Назначение:*\n"
+        "• Прием заявок на Хелперов\n"
+        "• Обработка обращений в техподдержку\n"
+        "• Прием жалоб\n\n"
+        "💡 *Все заявки автоматически отправляются администрации.*"
+    )
+    bot.send_message(
+        message.chat.id,
+        about_text,
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
+
+@bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
 def start_helper(message):
     bot.set_state(message.from_user.id, UserStates.helper_name, message.chat.id)
     bot.send_message(
         message.chat.id,
-        "📝 Введите ваше Имя и Фамилию:",
-        reply_markup=types.ReplyKeyboardRemove()
+        "📝 *Заявка на Хелпера*\n\n"
+        "Пожалуйста, введите ваши *Имя и Фамилию*:",
+        parse_mode='Markdown',
+        reply_markup=get_cancel_menu()
     )
 
-@bot.message_handler(func=lambda msg: msg.text == "🛠 Обратиться в техподдержку")
+@bot.message_handler(func=lambda msg: msg.text == "🛠 Техподдержка")
 def start_support(message):
     bot.set_state(message.from_user.id, UserStates.support_problem, message.chat.id)
     bot.send_message(
         message.chat.id,
-        "🔧 Опишите вашу проблему:",
-        reply_markup=types.ReplyKeyboardRemove()
+        "🔧 *Обращение в техподдержку*\n\n"
+        "Опишите вашу проблему как можно подробнее.\n"
+        "Можете приложить скриншот или файл.",
+        parse_mode='Markdown',
+        reply_markup=get_cancel_menu()
     )
 
 @bot.message_handler(func=lambda msg: msg.text == "⚠️ Подать жалобу")
@@ -107,131 +158,206 @@ def start_complain(message):
     bot.set_state(message.from_user.id, UserStates.complain_against, message.chat.id)
     bot.send_message(
         message.chat.id,
-        "⚠️ Укажите ник или ID человека:",
-        reply_markup=types.ReplyKeyboardRemove()
+        "⚠️ *Подача жалобы*\n\n"
+        "Укажите ник или ID человека, на которого хотите пожаловаться:",
+        parse_mode='Markdown',
+        reply_markup=get_cancel_menu()
     )
 
+@bot.message_handler(func=lambda msg: msg.text == "❌ Отмена")
+def cancel_action(message):
+    bot.delete_state(message.from_user.id, message.chat.id)
+    bot.send_message(
+        message.chat.id,
+        "❌ Действие отменено.",
+        reply_markup=get_main_menu()
+    )
+
+# ===== ОБРАБОТКА АНКЕТЫ ХЕЛПЕРА =====
 @bot.message_handler(state=UserStates.helper_name)
 def process_helper_name(message):
-    if message.text.lower() == "/cancel":
-        bot.delete_state(message.from_user.id, message.chat.id)
-        bot.send_message(message.chat.id, "❌ Отменено.", reply_markup=get_main_menu())
+    if message.text == "❌ Отмена":
+        cancel_action(message)
         return
-    bot.send_message(message.chat.id, "📅 Введите возраст:")
+    
+    bot.send_message(message.chat.id, "📅 Введите ваш *возраст*:", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.helper_age, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['name'] = message.text
 
 @bot.message_handler(state=UserStates.helper_age)
 def process_helper_age(message):
-    if not message.text.isdigit():
-        bot.send_message(message.chat.id, "⛔ Введите цифры!")
+    if message.text == "❌ Отмена":
+        cancel_action(message)
         return
-    bot.send_message(message.chat.id, "💬 Расскажите о вашем опыте:")
+    
+    if not message.text.isdigit():
+        bot.send_message(message.chat.id, "⛔ Пожалуйста, введите возраст *цифрами*:", parse_mode='Markdown')
+        return
+    
+    bot.send_message(message.chat.id, "💬 Расскажите о вашем *опыте* или почему хотите стать Хелпером:", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.helper_experience, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['age'] = message.text
 
 @bot.message_handler(state=UserStates.helper_experience)
 def process_helper_experience(message):
-    bot.send_message(message.chat.id, "📱 Оставьте контакт для связи:")
+    if message.text == "❌ Отмена":
+        cancel_action(message)
+        return
+    
+    bot.send_message(message.chat.id, "📱 Оставьте *контакт* для связи (Telegram, Discord или номер телефона):", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.helper_contact, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['experience'] = message.text
 
 @bot.message_handler(state=UserStates.helper_contact)
 def process_helper_contact(message):
+    if message.text == "❌ Отмена":
+        cancel_action(message)
+        return
+    
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['contact'] = message.text
         text = (
-            f"👤 Имя: {data.get('name')}\n"
-            f"📅 Возраст: {data.get('age')}\n"
-            f"💬 Опыт: {data.get('experience')}\n"
-            f"📱 Контакт: {data.get('contact')}"
+            f"👤 *Имя:* {data.get('name')}\n"
+            f"📅 *Возраст:* {data.get('age')}\n"
+            f"💬 *Опыт:* {data.get('experience')}\n"
+            f"📱 *Контакт:* {data.get('contact')}"
         )
+    
     user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
+    send_to_channel("📋 ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
     bot.delete_state(message.from_user.id, message.chat.id)
-    bot.send_message(message.chat.id, "✅ Отправлено!", reply_markup=get_main_menu())
+    
+    bot.send_message(
+        message.chat.id,
+        "✅ *Заявка успешно отправлена!*\n\n"
+        "Мы свяжемся с вами в ближайшее время.\n"
+        "Спасибо за интерес к проекту! 🙌",
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
 
+# ===== ОБРАБОТКА ТЕХПОДДЕРЖКИ =====
 @bot.message_handler(state=UserStates.support_problem, content_types=['text', 'photo', 'document'])
 def process_support(message):
-    if message.text and message.text.lower() == "/cancel":
-        bot.delete_state(message.from_user.id, message.chat.id)
-        bot.send_message(message.chat.id, "❌ Отменено.", reply_markup=get_main_menu())
+    if message.text and message.text == "❌ Отмена":
+        cancel_action(message)
         return
-    text = message.text if message.text else "Файл/скриншот"
+    
+    if message.text:
+        text = f"📝 {message.text}"
+    elif message.photo:
+        text = "🖼 Скриншот приложен"
+    elif message.document:
+        text = "📎 Файл приложен"
+    else:
+        text = "Сообщение без текста"
+    
     user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", f"📝 {text}", message.from_user.id, user_name)
+    send_to_channel("🔧 ОБРАЩЕНИЕ В ТЕХПОДДЕРЖКУ", text, message.from_user.id, user_name)
     bot.delete_state(message.from_user.id, message.chat.id)
-    bot.send_message(message.chat.id, "✅ Отправлено!", reply_markup=get_main_menu())
+    
+    bot.send_message(
+        message.chat.id,
+        "✅ *Обращение отправлено!*\n\n"
+        "Техподдержка свяжется с вами в ближайшее время.",
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
 
+# ===== ОБРАБОТКА ЖАЛОБЫ =====
 @bot.message_handler(state=UserStates.complain_against)
 def process_complain_against(message):
-    if message.text.lower() == "/cancel":
-        bot.delete_state(message.from_user.id, message.chat.id)
-        bot.send_message(message.chat.id, "❌ Отменено.", reply_markup=get_main_menu())
+    if message.text == "❌ Отмена":
+        cancel_action(message)
         return
-    bot.send_message(message.chat.id, "📝 Опишите причину:")
+    
+    bot.send_message(message.chat.id, "📝 Опишите *причину жалобы* подробно:", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.complain_reason, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['against'] = message.text
 
 @bot.message_handler(state=UserStates.complain_reason)
 def process_complain_reason(message):
-    bot.send_message(message.chat.id, "📎 Приложите доказательства (или напишите 'нет'):")
+    if message.text == "❌ Отмена":
+        cancel_action(message)
+        return
+    
+    bot.send_message(message.chat.id, "📎 Приложите *доказательства* (скриншот, ссылка) или напишите 'нет':", parse_mode='Markdown')
     bot.set_state(message.from_user.id, UserStates.complain_evidence, message.chat.id)
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
         data['reason'] = message.text
 
 @bot.message_handler(state=UserStates.complain_evidence, content_types=['text', 'photo', 'document'])
 def process_complain_evidence(message):
+    if message.text and message.text == "❌ Отмена":
+        cancel_action(message)
+        return
+    
     with bot.retrieve_data(message.from_user.id, message.chat.id) as data:
-        evidence = message.text if message.text else "Скриншот/файл"
+        if message.text:
+            evidence = message.text
+        elif message.photo:
+            evidence = "🖼 Скриншот приложен"
+        elif message.document:
+            evidence = "📎 Файл приложен"
+        else:
+            evidence = "Без доказательств"
+        
         data['evidence'] = evidence
         text = (
-            f"👤 Жалоба на: {data.get('against')}\n"
-            f"📝 Причина: {data.get('reason')}\n"
-            f"📎 Доказательства: {evidence}"
+            f"👤 *Жалоба на:* {data.get('against')}\n"
+            f"📝 *Причина:* {data.get('reason')}\n"
+            f"📎 *Доказательства:* {evidence}"
         )
+    
     user_name = message.from_user.username or message.from_user.first_name
-    send_to_channel("НОВАЯ ЖАЛОБА", text, message.from_user.id, user_name)
+    send_to_channel("⚠️ НОВАЯ ЖАЛОБА", text, message.from_user.id, user_name)
     bot.delete_state(message.from_user.id, message.chat.id)
-    bot.send_message(message.chat.id, "✅ Отправлено!", reply_markup=get_main_menu())
+    
+    bot.send_message(
+        message.chat.id,
+        "✅ *Жалоба отправлена!*\n\n"
+        "Администрация рассмотрит её в ближайшее время.",
+        parse_mode='Markdown',
+        reply_markup=get_main_menu()
+    )
 
 @bot.message_handler(commands=['cancel'])
 def cancel(message):
     bot.delete_state(message.from_user.id, message.chat.id)
-    bot.send_message(message.chat.id, "❌ Отменено.", reply_markup=get_main_menu())
+    bot.send_message(
+        message.chat.id,
+        "❌ Действие отменено.",
+        reply_markup=get_main_menu()
+    )
 
 @bot.message_handler(func=lambda msg: True)
 def echo_all(message):
     bot.send_message(
         message.chat.id,
-        "❗ Используйте кнопки меню.",
+        "❗ Используйте кнопки меню или команду /start",
         reply_markup=get_main_menu()
     )
 
-# ===== ЗАПУСК БОТА В ОТДЕЛЬНОМ ПОТОКЕ =====
+# ===== ЗАПУСК БОТА =====
 def run_bot():
-    """Запускает бота в режиме polling"""
-    print("🤖 Запуск Telegram бота (polling)...")
+    print("🤖 Запуск Telegram бота...")
     while True:
         try:
             bot.infinity_polling(timeout=60)
         except Exception as e:
-            print(f"❌ Ошибка в polling: {e}")
+            print(f"❌ Ошибка: {e}")
             time.sleep(5)
 
-# ===== ГЛАВНЫЙ ЗАПУСК =====
 if __name__ == "__main__":
     print("🚀 Запуск VIBE RUSSIA Bot...")
     
-    # Запускаем бота в отдельном потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # Запускаем Flask для пинга
     port = int(os.environ.get("PORT", 8080))
     print(f"🌐 Запуск Flask сервера на порту {port}")
     app.run(host='0.0.0.0', port=port)
