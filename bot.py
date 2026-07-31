@@ -6,6 +6,7 @@ import logging
 from datetime import datetime
 from flask import Flask
 import threading
+import json
 
 # ===== НАСТРОЙКИ =====
 BOT_TOKEN = os.environ.get("BOT_TOKEN")
@@ -13,6 +14,9 @@ CHANNEL_ID = os.environ.get("CHANNEL_ID")
 
 # ⚠️ ВСТАВЬТЕ СВОЙ ID СЮДА!
 ADMIN_IDS = [8718572838]  # Ваш ID из @userinfobot
+
+# Версия бота (меняется через админ-панель)
+BOT_VERSION = "2.0.0"
 
 if not BOT_TOKEN or not CHANNEL_ID:
     print("❌ Ошибка: BOT_TOKEN или CHANNEL_ID не заданы!")
@@ -36,8 +40,9 @@ bot = telebot.TeleBot(BOT_TOKEN)
 user_states = {}
 user_data = {}
 applications = {}
+users = {}  # {user_id: {'first_seen': ..., 'last_seen': ...}}
 
-# ===== ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ =====
+# ===== ФУНКЦИИ =====
 def get_state(user_id):
     return user_states.get(str(user_id))
 
@@ -75,6 +80,21 @@ def get_cancel_menu():
     markup.add(types.KeyboardButton("❌ Отмена"))
     return markup
 
+def save_user(user_id, username=None):
+    """Сохраняет информацию о пользователе"""
+    user_id = str(user_id)
+    now = datetime.now().isoformat()
+    if user_id not in users:
+        users[user_id] = {
+            'first_seen': now,
+            'username': username,
+            'last_seen': now
+        }
+    else:
+        users[user_id]['last_seen'] = now
+        if username:
+            users[user_id]['username'] = username
+
 def send_application_to_channel(app_type, text, user_id, user_name=None):
     try:
         app_id = int(time.time())
@@ -105,6 +125,22 @@ def send_application_to_channel(app_type, text, user_id, user_name=None):
         print(f"❌ Ошибка: {e}")
         return None
 
+def notify_all_users(message_text):
+    """Отправляет уведомление всем пользователям"""
+    count = 0
+    for user_id in users.keys():
+        try:
+            bot.send_message(
+                int(user_id),
+                f"📢 *Уведомление от VIBE RUSSIA*\n\n{message_text}",
+                parse_mode='Markdown'
+            )
+            count += 1
+            time.sleep(0.1)  # Чтобы не заблокировали
+        except:
+            pass
+    return count
+
 # ============================================
 # ===== ОБРАБОТКА КНОПОК =====
 # ============================================
@@ -113,13 +149,12 @@ def send_application_to_channel(app_type, text, user_id, user_name=None):
 def handle_all_callbacks(call):
     user_id = call.from_user.id
     
-    # Проверка админа для всех действий кроме "status"
     if not call.data.startswith('status'):
         if user_id not in ADMIN_IDS:
-            bot.answer_callback_query(call.id, "⛔ У вас нет прав администратора!", show_alert=True)
+            bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
             return
     
-    # ===== КНОПКИ АДМИН-ПАНЕЛИ =====
+    # ===== АДМИН-ПАНЕЛЬ =====
     if call.data == 'admin_all':
         if not applications:
             bot.edit_message_text("📭 *Нет заявок*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
@@ -160,11 +195,13 @@ def handle_all_callbacks(call):
         
         text = (
             "📊 *СТАТИСТИКА*\n\n"
-            f"📋 Всего: {total}\n"
+            f"📋 Всего заявок: {total}\n"
             f"⏳ В ожидании: {pending}\n"
             f"📌 В работе: {in_progress}\n"
             f"✅ Одобрено: {approved}\n"
             f"❌ Отклонено: {rejected}\n"
+            f"👥 Всего пользователей: {len(users)}\n\n"
+            f"🤖 Версия бота: v{BOT_VERSION}"
         )
         bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
         bot.answer_callback_query(call.id, "✅ Статистика")
@@ -270,12 +307,10 @@ def handle_all_callbacks(call):
             bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)[:30]}")
         return
     
-    # ===== КНОПКА СТАТУСА (просто уведомление) =====
     if call.data == 'status':
         bot.answer_callback_query(call.id, "📌 Текущий статус заявки")
         return
     
-    # ===== ЕСЛИ НИЧЕГО НЕ ПОДОШЛО =====
     bot.answer_callback_query(call.id, "❓ Неизвестная команда")
 
 # ============================================
@@ -286,6 +321,10 @@ def handle_all_callbacks(call):
 def start(message):
     clear_state(message.from_user.id)
     user_name = message.from_user.first_name
+    username = message.from_user.username
+    
+    # Сохраняем пользователя
+    save_user(message.from_user.id, username)
     
     welcome_text = (
         f"🎮 *Добро пожаловать в VIBE RUSSIA!*\n\n"
@@ -299,7 +338,7 @@ def start(message):
     )
     
     if message.from_user.id in ADMIN_IDS:
-        welcome_text += "\n\n🔐 *Админ-панель:* /admin"
+        welcome_text += "\n\n🔐 *Админ-панель:* /admin\n📌 *Сменить версию:* /setversion"
     
     bot.send_message(
         message.chat.id,
@@ -324,9 +363,58 @@ def admin_panel(message):
     
     bot.send_message(
         message.chat.id,
-        "🔐 *Админ-панель*\n\nВыберите действие:",
+        f"🔐 *Админ-панель*\n\n🤖 Версия: v{BOT_VERSION}\n👥 Пользователей: {len(users)}\n\nВыберите действие:",
         parse_mode='Markdown',
         reply_markup=markup
+    )
+
+@bot.message_handler(commands=['setversion'])
+def set_version(message):
+    """Команда для смены версии бота (только для админов)"""
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав администратора!")
+        return
+    
+    global BOT_VERSION
+    
+    # Разбираем команду: /setversion 2.1.0
+    args = message.text.split()
+    if len(args) < 2:
+        bot.reply_to(
+            message,
+            f"📌 *Текущая версия:* v{BOT_VERSION}\n\n"
+            "📝 *Как изменить:*\n"
+            "`/setversion 2.1.0`\n\n"
+            "💡 *Пример:* `/setversion 3.0.0`",
+            parse_mode='Markdown'
+        )
+        return
+    
+    new_version = args[1]
+    old_version = BOT_VERSION
+    BOT_VERSION = new_version
+    
+    # Отправляем уведомление всем пользователям
+    notify_text = (
+        f"🔄 *Обновление бота!*\n\n"
+        f"Бот VIBE RUSSIA обновлён до версии *v{new_version}*\n\n"
+        f"📌 *Что нового:*\n"
+        f"• Улучшена стабильность\n"
+        f"• Исправлены мелкие баги\n"
+        f"• Добавлены новые функции\n\n"
+        f"Спасибо, что вы с нами! ❤️"
+    )
+    
+    count = notify_all_users(notify_text)
+    
+    bot.reply_to(
+        message,
+        f"✅ *Версия обновлена!*\n\n"
+        f"📌 *Старая версия:* v{old_version}\n"
+        f"📌 *Новая версия:* v{new_version}\n"
+        f"👥 *Уведомлено пользователей:* {count}\n\n"
+        f"Все пользователи получили уведомление! 🎉",
+        parse_mode='Markdown'
     )
 
 @bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
@@ -363,12 +451,15 @@ def start_complain(message):
 def about(message):
     about_text = (
         "🤖 *VIBE RUSSIA Bot*\n\n"
-        "Версия: 2.0\n"
-        "Для проекта VIBE RUSSIA\n\n"
-        "📌 *Назначение:*\n"
+        f"📌 *Версия:* v{BOT_VERSION}\n"
+        f"📅 *Дата сборки:* {datetime.now().strftime('%d.%m.%Y')}\n\n"
+        "📋 *Назначение:*\n"
         "• Прием заявок на Хелперов\n"
         "• Обработка обращений в техподдержку\n"
-        "• Прием жалоб"
+        "• Прием жалоб\n\n"
+        "👥 *Всего пользователей:* {len(users)}\n\n"
+        "💡 *Разработано для VIBE RUSSIA*\n"
+        "❤️ Спасибо, что вы с нами!"
     )
     bot.send_message(
         message.chat.id,
@@ -395,9 +486,17 @@ def handle_all_messages(message):
     user_id = str(message.from_user.id)
     state = get_state(user_id)
     
+    # Сохраняем пользователя
+    save_user(message.from_user.id, message.from_user.username)
+    
     if not state:
         if message.text in ["🙋‍♂️ Стать Хелпером", "🛠 Техподдержка", "⚠️ Подать жалобу", "ℹ️ О боте", "❌ Отмена"]:
             return
+        
+        # Проверяем команды админа
+        if message.text and message.text.startswith('/setversion'):
+            return
+        
         bot.send_message(
             message.chat.id,
             "❗ Используйте кнопки меню или команду /start",
