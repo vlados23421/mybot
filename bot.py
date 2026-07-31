@@ -18,7 +18,7 @@ if not BOT_TOKEN or not CHANNEL_ID:
 # ===== FLASK APP =====
 app = Flask(__name__)
 
-# ===== TELEGRAM BOT (без polling) =====
+# ===== TELEGRAM BOT =====
 state_storage = StateMemoryStorage()
 bot = telebot.TeleBot(BOT_TOKEN, state_storage=state_storage)
 
@@ -216,19 +216,31 @@ def webhook():
         return 'OK', 200
     return 'Bad Request', 400
 
-# ===== ГЛАВНЫЙ ЗАПУСК =====
-if __name__ == "__main__":
-    print("🚀 Запуск VIBE RUSSIA Bot (Webhook)...")
+# ===== НАСТРОЙКА ВЕБХУКА ПРИ ЗАПУСКЕ =====
+def setup_webhook():
+    """Устанавливает вебхук при запуске"""
+    webhook_url = f"https://mybot-qeun.onrender.com/{BOT_TOKEN}"
     
     # Удаляем старый вебхук
     bot.remove_webhook()
     
-    # Устанавливаем новый вебхук
-    webhook_url = f"https://mybot.onrender.com/{BOT_TOKEN}"
-    bot.set_webhook(url=webhook_url)
+    # Устанавливаем новый
+    result = bot.set_webhook(url=webhook_url)
     
-    print(f"✅ Webhook установлен: {webhook_url}")
-    print("🌐 Запуск Flask сервера...")
+    if result:
+        print(f"✅ Webhook успешно установлен: {webhook_url}")
+    else:
+        print(f"❌ Ошибка установки webhook: {webhook_url}")
+    
+    return result
+
+# ===== ГЛАВНЫЙ ЗАПУСК =====
+if __name__ == "__main__":
+    print("🚀 Запуск VIBE RUSSIA Bot...")
+    
+    # Настраиваем вебхук
+    setup_webhook()
     
     port = int(os.environ.get("PORT", 8080))
+    print(f"🌐 Запуск Flask сервера на порту {port}")
     app.run(host='0.0.0.0', port=port)
