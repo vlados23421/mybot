@@ -10,7 +10,7 @@ from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from openai import OpenAI
+from aiogram.utils import executor
 
 # --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
