@@ -1,968 +1,444 @@
-import telebot
-from telebot import types
 import os
-import time
-import logging
-from datetime import datetime, timedelta
-from flask import Flask
+import asyncio
 import threading
 import json
+import sqlite3
+from datetime import datetime, timedelta
+from flask import Flask, request, jsonify
+from aiogram import Bot, Dispatcher, types
+from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
+from aiogram.filters import Command
+from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram.fsm.context import FSMContext
+from aiogram.fsm.state import State, StatesGroup
+import openai  # Или любой другой AI
 
-# ===== НАСТРОЙКИ =====
-BOT_TOKEN = os.environ.get("BOT_TOKEN")
-CHANNEL_ID = os.environ.get("CHANNEL_ID")
+# --- КОНФИГУРАЦИЯ ---
+BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
+OPENAI_API_KEY = os.environ.get("OPENAI_API_KEY")  # Для AI
+ADMIN_IDS = [123456789]  # Ваш Telegram ID (укажите свой)
+PREMIUM_PRICE = 299  # Цена в рублях (для демонстрации)
 
-# ⚠️ ВСТАВЬТЕ СВОЙ ID СЮДА!
-ADMIN_IDS = [8718572838]  # Ваш ID из @userinfobot
+if not BOT_TOKEN:
+    raise ValueError("TELEGRAM_BOT_TOKEN не задан!")
 
-# Версия бота
-BOT_VERSION = "2.5.0"
-
-if not BOT_TOKEN or not CHANNEL_ID:
-    print("❌ Ошибка: BOT_TOKEN или CHANNEL_ID не заданы!")
-    exit(1)
-
-# ===== FLASK =====
+# --- ИНИЦИАЛИЗАЦИЯ ---
+bot = Bot(token=BOT_TOKEN)
+storage = MemoryStorage()
+dp = Dispatcher(storage=storage)
 app = Flask(__name__)
 
+# --- БАЗА ДАННЫХ SQLITE ---
+def init_db():
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    
+    # Таблица пользователей
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id INTEGER PRIMARY KEY,
+            username TEXT,
+            tickets INTEGER DEFAULT 3,
+            is_premium BOOLEAN DEFAULT 0,
+            premium_until TEXT,
+            total_requests INTEGER DEFAULT 0,
+            created_at TEXT
+        )
+    ''')
+    
+    # Таблица истории запросов
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS history (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            question TEXT,
+            answer TEXT,
+            timestamp TEXT,
+            FOREIGN KEY (user_id) REFERENCES users (user_id)
+        )
+    ''')
+    
+    # Таблица платежей
+    cur.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            id INTEGER PRIMARY KEY AUTOINCREMENT,
+            user_id INTEGER,
+            amount INTEGER,
+            status TEXT,
+            payment_id TEXT,
+            created_at TEXT
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+
+init_db()
+
+# --- ФУНКЦИИ ДЛЯ РАБОТЫ С БД ---
+def get_user(user_id):
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    cur.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+    user = cur.fetchone()
+    conn.close()
+    return user
+
+def create_user(user_id, username):
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT OR IGNORE INTO users (user_id, username, tickets, created_at)
+        VALUES (?, ?, 3, ?)
+    ''', (user_id, username, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+def update_tickets(user_id, tickets):
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    cur.execute('UPDATE users SET tickets = ? WHERE user_id = ?', (tickets, user_id))
+    conn.commit()
+    conn.close()
+
+def set_premium(user_id, days=30):
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    until = (datetime.now() + timedelta(days=days)).isoformat()
+    cur.execute('''
+        UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?
+    ''', (until, user_id))
+    conn.commit()
+    conn.close()
+
+def check_premium(user_id):
+    user = get_user(user_id)
+    if not user:
+        return False
+    if user[3] == 1:  # is_premium
+        if user[4] and datetime.fromisoformat(user[4]) > datetime.now():
+            return True
+        else:
+            # Снимаем премиум если истек
+            conn = sqlite3.connect('bot_database.db')
+            cur = conn.cursor()
+            cur.execute('UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?', (user_id,))
+            conn.commit()
+            conn.close()
+            return False
+    return False
+
+def save_history(user_id, question, answer):
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    cur.execute('''
+        INSERT INTO history (user_id, question, answer, timestamp)
+        VALUES (?, ?, ?, ?)
+    ''', (user_id, question, answer, datetime.now().isoformat()))
+    conn.commit()
+    conn.close()
+
+# --- STATES ДЛЯ FSM ---
+class Form(StatesGroup):
+    waiting_for_question = State()
+    waiting_for_payment = State()
+
+# --- AI ФУНКЦИЯ ---
+async def ask_ai(question, user_id):
+    try:
+        if not OPENAI_API_KEY:
+            return "⚠️ AI не настроен. Добавьте OPENAI_API_KEY в переменные окружения."
+        
+        # Используем OpenAI или любой другой AI
+        client = openai.OpenAI(api_key=OPENAI_API_KEY)
+        response = client.chat.completions.create(
+            model="gpt-3.5-turbo",
+            messages=[
+                {"role": "system", "content": "Вы помощник проекта BEST RUSSIA. Отвечайте на русском языке, вежливо и информативно."},
+                {"role": "user", "content": question}
+            ],
+            max_tokens=500
+        )
+        answer = response.choices[0].message.content
+        save_history(user_id, question, answer)
+        return answer
+    except Exception as e:
+        return f"❌ Ошибка AI: {str(e)}"
+
+# --- КЛАВИАТУРЫ ---
+def main_menu():
+    keyboard = InlineKeyboardMarkup(inline_keyboard=[
+        [InlineKeyboardButton(text="🤖 Задать вопрос AI", callback_data="ask_ai")],
+        [InlineKeyboardButton(text="🎫 Мои билеты", callback_data="my_tickets")],
+        [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")],
+        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
+    ])
+    return keyboard
+
+# --- ОБРАБОТЧИКИ КОМАНД ---
+@dp.message(Command("start"))
+async def start_command(message: Message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Unknown"
+    create_user(user_id, username)
+    
+    welcome_text = f"""
+🎯 Добро пожаловать в BEST RUSSIA!
+
+👤 Ваш ID: {user_id}
+🎫 Билетов: {get_user(user_id)[2]}
+💎 Premium: {'✅ Активен' if check_premium(user_id) else '❌ Нет'}
+
+Используйте кнопки ниже для навигации.
+"""
+    await message.answer(welcome_text, reply_markup=main_menu())
+
+@dp.message(Command("help"))
+async def help_command(message: Message):
+    help_text = """
+📖 Помощь по боту BEST RUSSIA:
+
+🤖 **AI-помощник** - задайте любой вопрос
+🎫 **Билеты** - выдаются 3 шт. при регистрации
+💎 **Premium** - безлимитный AI на 30 дней
+📊 **Статистика** - ваша активность
+
+⚠️ Каждый вопрос к AI тратит 1 билет.
+Premium пользователи имеют безлимит.
+"""
+    await message.answer(help_text, reply_markup=main_menu())
+
+# --- ОБРАБОТЧИКИ CALLBACK ---
+@dp.callback_query()
+async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
+    user_id = callback.from_user.id
+    data = callback.data
+    
+    if data == "ask_ai":
+        user = get_user(user_id)
+        if not user:
+            await callback.message.answer("❌ Пользователь не найден. Используйте /start")
+            return
+        
+        tickets = user[2]
+        is_premium = check_premium(user_id)
+        
+        if is_premium:
+            await callback.message.answer("💬 Напишите ваш вопрос для AI (Premium безлимит):")
+            await state.set_state(Form.waiting_for_question)
+            await state.update_data(ask_type="premium")
+        elif tickets > 0:
+            await callback.message.answer(f"💬 Напишите ваш вопрос для AI (Осталось билетов: {tickets}):")
+            await state.set_state(Form.waiting_for_question)
+            await state.update_data(ask_type="ticket")
+        else:
+            await callback.message.answer(
+                "❌ У вас закончились билеты!\n"
+                "Купите Premium для безлимитного доступа.",
+                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
+                    [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")]
+                ])
+            )
+    
+    elif data == "my_tickets":
+        user = get_user(user_id)
+        if user:
+            is_premium = check_premium(user_id)
+            tickets = user[2]
+            text = f"""
+🎫 **Ваши билеты:** {tickets}
+💎 **Premium:** {'✅ Активен' if is_premium else '❌ Нет'}
+📅 **Премиум до:** {user[4] if user[4] else 'Не активен'}
+
+📊 **Всего запросов:** {user[5]}
+"""
+            await callback.message.answer(text, reply_markup=main_menu())
+        else:
+            await callback.message.answer("❌ Пользователь не найден")
+    
+    elif data == "buy_premium":
+        text = """
+💎 **Premium подписка BEST RUSSIA**
+
+Цена: 299 ₽
+
+✅ Безлимитные запросы к AI
+✅ Приоритетная поддержка
+✅ Доступ к эксклюзивным функциям
+
+💰 Оплата: USDT (TRC20) или Telegram Stars
+"""
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="💰 Оплатить USDT", callback_data="pay_usdt")],
+            [InlineKeyboardButton(text="⭐ Оплатить Stars", callback_data="pay_stars")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
+        ])
+        await callback.message.answer(text, reply_markup=keyboard)
+    
+    elif data == "pay_usdt":
+        payment_id = f"BEST_{user_id}_{datetime.now().timestamp()}"
+        text = f"""
+💳 **Оплата через USDT (TRC20)**
+
+Адрес для оплаты:
+`TXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXXX`
+
+Сумма: 10 USDT
+ID платежа: `{payment_id}`
+
+После оплаты нажмите кнопку "✅ Я оплатил"
+"""
+        keyboard = InlineKeyboardMarkup(inline_keyboard=[
+            [InlineKeyboardButton(text="✅ Я оплатил", callback_data=f"confirm_payment_{payment_id}")],
+            [InlineKeyboardButton(text="🔙 Назад", callback_data="buy_premium")]
+        ])
+        await callback.message.answer(text, reply_markup=keyboard)
+    
+    elif data.startswith("confirm_payment_"):
+        payment_id = data.replace("confirm_payment_", "")
+        # Здесь нужно проверить платеж через API криптобиржи
+        # Для демонстрации сразу активируем
+        set_premium(user_id, 30)
+        await callback.message.answer(
+            "✅ Premium активирован! Безлимитный AI теперь доступен.",
+            reply_markup=main_menu()
+        )
+    
+    elif data == "pay_stars":
+        # Для Telegram Stars нужно настроить через @BotFather
+        await callback.message.answer(
+            "⭐ Оплата через Telegram Stars в разработке.\n"
+            "Пока используйте USDT.",
+            reply_markup=main_menu()
+        )
+    
+    elif data == "stats":
+        user = get_user(user_id)
+        if user:
+            conn = sqlite3.connect('bot_database.db')
+            cur = conn.cursor()
+            cur.execute('SELECT COUNT(*) FROM history WHERE user_id = ?', (user_id,))
+            total_requests = cur.fetchone()[0]
+            conn.close()
+            
+            text = f"""
+📊 **Ваша статистика**
+
+🎫 Всего запросов: {total_requests}
+💎 Premium: {'✅' if check_premium(user_id) else '❌'}
+📅 Дата регистрации: {user[6][:10] if user[6] else 'Неизвестно'}
+"""
+            await callback.message.answer(text, reply_markup=main_menu())
+    
+    elif data == "help":
+        await help_command(callback.message)
+    
+    elif data == "back":
+        await callback.message.answer("Главное меню:", reply_markup=main_menu())
+    
+    await callback.answer()
+
+# --- ОБРАБОТЧИК СООБЩЕНИЙ (AI) ---
+@dp.message(Form.waiting_for_question)
+async def handle_ai_question(message: Message, state: FSMContext):
+    user_id = message.from_user.id
+    question = message.text
+    
+    if not question:
+        await message.answer("Пожалуйста, напишите текст вопроса.")
+        return
+    
+    # Получаем данные состояния
+    data = await state.get_data()
+    ask_type = data.get("ask_type", "ticket")
+    
+    # Проверяем лимиты
+    user = get_user(user_id)
+    is_premium = check_premium(user_id)
+    
+    if not is_premium and ask_type == "ticket":
+        tickets = user[2]
+        if tickets <= 0:
+            await message.answer(
+                "❌ У вас закончились билеты!\n"
+                "Купите Premium для безлимитного доступа.",
+                reply_markup=main_menu()
+            )
+            await state.clear()
+            return
+        # Списываем билет
+        update_tickets(user_id, tickets - 1)
+    
+    # Отправляем статус
+    waiting_msg = await message.answer("⏳ Думаю над ответом...")
+    
+    # Запрос к AI
+    answer = await ask_ai(question, user_id)
+    
+    # Отправляем ответ
+    await waiting_msg.delete()
+    await message.answer(answer, reply_markup=main_menu())
+    await state.clear()
+
+# --- FLASK ЭНДПОИНТЫ ---
 @app.route('/')
-def index():
-    return "🤖 VIBE RUSSIA Bot is running!", 200
+def home():
+    return "🤖 BEST RUSSIA Bot is running!", 200
 
 @app.route('/health')
 def health():
     return "OK", 200
 
-# ===== БОТ =====
-bot = telebot.TeleBot(BOT_TOKEN)
+@app.route('/webhook', methods=['POST'])
+def webhook():
+    """Для интеграции с платежными системами"""
+    data = request.json
+    # Обработка платежей от внешних систем
+    return jsonify({"status": "ok"}), 200
 
-# ===== ХРАНИЛИЩЕ =====
-user_states = {}
-user_data = {}
-applications = {}
-users = {}  # {user_id: {'first_seen': ..., 'last_seen': ..., 'username': ...}}
-user_profile = {}  # {user_id: {'registered': ..., 'apps_count': 0, 'bonus': 0}}
-user_bonus = {}  # {user_id: {'last_bonus': '2026-07-31', 'streak': 0}}
-BANNED_USERS = []  # Список забаненных
-
-# ===== АВТО-ОТВЕТЫ =====
-AUTO_REPLIES = {
-    "привет": "👋 Привет! Чем могу помочь? Напиши /start",
-    "прив": "👋 Привет! Чем могу помочь? Напиши /start",
-    "здарова": "👋 Привет! Чем могу помочь? Напиши /start",
-    "как играть": "🎮 Инструкция по играм:\n1. Нажми /start\n2. Выбери игру\n3. Следуй инструкциям",
-    "помощь": "🆘 Чем помочь? Напиши /help или /start",
-    "хелп": "🆘 Чем помочь? Напиши /help или /start",
-    "правила": "📋 Правила проекта:\n1. Будь вежлив\n2. Не спамь\n3. Уважай других игроков",
-    "контакты": "📱 Связь с нами:\n• @VibeRussiaSupportBot\n• support.vibe.russia@gmail.com",
-    "поддержка": "🛠 Техподдержка: @vibe_support\nИли нажми кнопку 'Техподдержка'",
-    "спасибо": "😊 Пожалуйста! Всегда рад помочь!",
-    "спс": "😊 Пожалуйста! Всегда рад помочь!",
-}
-
-# ===== ФУНКЦИИ =====
-def get_state(user_id):
-    return user_states.get(str(user_id))
-
-def set_state(user_id, state):
-    user_states[str(user_id)] = state
-
-def clear_state(user_id):
-    if str(user_id) in user_states:
-        del user_states[str(user_id)]
-    if str(user_id) in user_data:
-        del user_data[str(user_id)]
-
-def get_data(user_id):
-    return user_data.get(str(user_id), {})
-
-def set_data(user_id, key, value):
-    if str(user_id) not in user_data:
-        user_data[str(user_id)] = {}
-    user_data[str(user_id)][key] = value
-
-def is_cancel(text):
-    return text and text in ["❌ Отмена", "Отмена", "/cancel"]
-
-def get_main_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True, row_width=2)
-    btn1 = types.KeyboardButton("🙋‍♂️ Стать Хелпером")
-    btn2 = types.KeyboardButton("🛠 Техподдержка")
-    btn3 = types.KeyboardButton("⚠️ Подать жалобу")
-    btn4 = types.KeyboardButton("ℹ️ О боте")
-    btn5 = types.KeyboardButton("👤 Мой профиль")
-    btn6 = types.KeyboardButton("🏆 Топ игроков")
-    markup.add(btn1, btn2, btn3, btn4, btn5, btn6)
-    return markup
-
-def get_cancel_menu():
-    markup = types.ReplyKeyboardMarkup(resize_keyboard=True)
-    markup.add(types.KeyboardButton("❌ Отмена"))
-    return markup
-
-def save_user(user_id, username=None):
-    """Сохраняет информацию о пользователе"""
-    user_id = str(user_id)
-    now = datetime.now().isoformat()
+@app.route('/admin/stats')
+def admin_stats():
+    """Статистика для админа"""
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
     
-    if user_id not in users:
-        users[user_id] = {
-            'first_seen': now,
-            'username': username,
-            'last_seen': now
-        }
-        # Создаём профиль
-        user_profile[user_id] = {
-            'registered': now,
-            'apps_count': 0,
-            'bonus': 0,
-            'last_bonus': None
-        }
-    else:
-        users[user_id]['last_seen'] = now
-        if username:
-            users[user_id]['username'] = username
+    cur.execute('SELECT COUNT(*) FROM users')
+    total_users = cur.fetchone()[0]
+    
+    cur.execute('SELECT COUNT(*) FROM users WHERE is_premium = 1')
+    premium_users = cur.fetchone()[0]
+    
+    cur.execute('SELECT SUM(tickets) FROM users')
+    total_tickets = cur.fetchone()[0] or 0
+    
+    conn.close()
+    
+    return jsonify({
+        "total_users": total_users,
+        "premium_users": premium_users,
+        "total_tickets": total_tickets,
+        "status": "running"
+    })
 
-def send_application_to_channel(app_type, text, user_id, user_name=None):
-    try:
-        app_id = int(time.time())
-        
-        # Увеличиваем счётчик заявок пользователя
-        user_id_str = str(user_id)
-        if user_id_str in user_profile:
-            user_profile[user_id_str]['apps_count'] += 1
-        
-        applications[app_id] = {
-            'user_id': user_id,
-            'type': app_type,
-            'data': text,
-            'status': 'pending',
-            'created_at': datetime.now().isoformat()
-        }
-        
-        header = f"📩 НОВАЯ ЗАЯВКА: {app_type}\n"
-        header += f"🆔 Заявка: #{app_id}\n"
-        header += f"👤 От: @{user_name or user_id}\n"
-        header += f"🆔 ID: {user_id}\n"
-        header += f"⏰ {datetime.now().strftime('%d.%m.%Y %H:%M')}\n\n"
-        
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        btn_approve = types.InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{app_id}")
-        btn_reject = types.InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{app_id}")
-        btn_take = types.InlineKeyboardButton("📌 Взять в работу", callback_data=f"take_{app_id}")
-        btn_close = types.InlineKeyboardButton("✅ Закрыть", callback_data=f"close_{app_id}")
-        markup.add(btn_approve, btn_reject, btn_take, btn_close)
-        
-        bot.send_message(CHANNEL_ID, header + text, reply_markup=markup)
-        return app_id
-    except Exception as e:
-        print(f"❌ Ошибка: {e}")
-        return None
+# --- ЗАПУСК БОТА В ПОТОКЕ ---
+def run_bot():
+    asyncio.run(dp.start_polling(bot))
 
-def notify_user(user_id, message_text):
-    """Отправляет уведомление пользователю"""
-    try:
-        bot.send_message(
-            user_id,
-            f"📢 *Уведомление от VIBE RUSSIA*\n\n{message_text}",
-            parse_mode='Markdown'
-        )
-        return True
-    except:
-        return False
-
-def notify_all_users(message_text):
-    """Отправляет уведомление всем пользователям"""
-    count = 0
-    for user_id in users.keys():
+# --- ТОЧКА ВХОДА ---
+if __name__ == "__main__":
+    # Создаем пользователя-админа
+    for admin_id in ADMIN_IDS:
         try:
-            bot.send_message(
-                int(user_id),
-                f"📢 *Уведомление от VIBE RUSSIA*\n\n{message_text}",
-                parse_mode='Markdown'
-            )
-            count += 1
-            time.sleep(0.1)
+            create_user(admin_id, "Admin")
+            set_premium(admin_id, 365)  # Даем премиум на год
         except:
             pass
-    return count
-
-# ============================================
-# ===== ОБРАБОТКА КНОПОК =====
-# ============================================
-
-@bot.callback_query_handler(func=lambda call: True)
-def handle_all_callbacks(call):
-    user_id = call.from_user.id
     
-    # Проверка бана
-    if user_id in BANNED_USERS:
-        bot.answer_callback_query(call.id, "⛔ Вы заблокированы!")
-        return
-    
-    if not call.data.startswith('status'):
-        if user_id not in ADMIN_IDS:
-            bot.answer_callback_query(call.id, "⛔ У вас нет прав!", show_alert=True)
-            return
-    
-    # ===== АДМИН-ПАНЕЛЬ =====
-    if call.data == 'admin_all':
-        if not applications:
-            bot.edit_message_text("📭 *Нет заявок*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-            bot.answer_callback_query(call.id, "📭 Нет заявок")
-            return
-        
-        text = "📋 *ВСЕ ЗАЯВКИ*\n\n"
-        for app_id, app in list(applications.items())[-10:]:
-            status = app.get('status', 'pending')
-            emoji = {'pending': '⏳', 'approved': '✅', 'rejected': '❌', 'in_progress': '📌', 'closed': '✅'}.get(status, '❓')
-            text += f"{emoji} #{app_id} | {app.get('type', '?')}\n👤 {app.get('user_id')}\n📌 {status.upper()}\n\n"
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-        bot.answer_callback_query(call.id, "✅ Показаны все заявки")
-        return
-    
-    if call.data == 'admin_pending':
-        pending = {k: v for k, v in applications.items() if v.get('status') == 'pending'}
-        if not pending:
-            bot.edit_message_text("✅ *Нет заявок в ожидании*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-            bot.answer_callback_query(call.id, "✅ Нет заявок")
-            return
-        
-        text = "⏳ *ЗАЯВКИ В ОЖИДАНИИ*\n\n"
-        for app_id, app in pending.items():
-            text += f"#{app_id} | {app.get('type', '?')}\n👤 {app.get('user_id')}\n\n"
-        
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-        bot.answer_callback_query(call.id, "✅ Показаны заявки в ожидании")
-        return
-    
-    if call.data == 'admin_stats':
-        total = len(applications)
-        pending = len([a for a in applications.values() if a.get('status') == 'pending'])
-        approved = len([a for a in applications.values() if a.get('status') == 'approved'])
-        rejected = len([a for a in applications.values() if a.get('status') == 'rejected'])
-        in_progress = len([a for a in applications.values() if a.get('status') == 'in_progress'])
-        banned = len(BANNED_USERS)
-        
-        text = (
-            "📊 *СТАТИСТИКА*\n\n"
-            f"📋 Всего заявок: {total}\n"
-            f"⏳ В ожидании: {pending}\n"
-            f"📌 В работе: {in_progress}\n"
-            f"✅ Одобрено: {approved}\n"
-            f"❌ Отклонено: {rejected}\n"
-            f"👥 Всего пользователей: {len(users)}\n"
-            f"🚫 Забанено: {banned}\n\n"
-            f"🤖 Версия бота: v{BOT_VERSION}"
-        )
-        bot.edit_message_text(text, call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-        bot.answer_callback_query(call.id, "✅ Статистика")
-        return
-    
-    if call.data == 'admin_clear':
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("✅ Да, удалить всё", callback_data="admin_clear_yes"),
-            types.InlineKeyboardButton("❌ Нет, отмена", callback_data="admin_clear_no")
-        )
-        bot.edit_message_text(
-            "⚠️ *УДАЛИТЬ ВСЕ ЗАЯВКИ?*\n\nЭто действие нельзя отменить!",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        bot.answer_callback_query(call.id, "⚠️ Подтвердите")
-        return
-    
-    if call.data == 'admin_clear_yes':
-        applications.clear()
-        bot.edit_message_text("🗑 *Все заявки удалены*", call.message.chat.id, call.message.message_id, parse_mode='Markdown')
-        bot.answer_callback_query(call.id, "✅ Удалено")
-        return
-    
-    if call.data == 'admin_clear_no':
-        markup = types.InlineKeyboardMarkup(row_width=2)
-        markup.add(
-            types.InlineKeyboardButton("📋 Все заявки", callback_data="admin_all"),
-            types.InlineKeyboardButton("⏳ В ожидании", callback_data="admin_pending"),
-            types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-            types.InlineKeyboardButton("🗑 Очистить все", callback_data="admin_clear")
-        )
-        bot.edit_message_text(
-            "🔐 *Админ-панель*\n\nВыберите действие:",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode='Markdown',
-            reply_markup=markup
-        )
-        bot.answer_callback_query(call.id, "✅ Отменено")
-        return
-    
-    # ===== КНОПКИ УПРАВЛЕНИЯ ЗАЯВКАМИ =====
-    if call.data.startswith('approve_') or call.data.startswith('reject_') or call.data.startswith('take_') or call.data.startswith('close_'):
-        action, app_id = call.data.split('_')
-        app_id = int(app_id)
-        
-        if app_id not in applications:
-            bot.answer_callback_query(call.id, "❌ Заявка не найдена!", show_alert=True)
-            return
-        
-        app = applications[app_id]
-        
-        if action == 'approve':
-            app['status'] = 'approved'
-            status_text = "✅ ОДОБРЕНА"
-            user_text = "✅ Ваша заявка ОДОБРЕНА! Поздравляем! 🎉"
-        elif action == 'reject':
-            app['status'] = 'rejected'
-            status_text = "❌ ОТКЛОНЕНА"
-            user_text = "❌ Заявка ОТКЛОНЕНА. Свяжитесь с администрацией."
-        elif action == 'take':
-            app['status'] = 'in_progress'
-            status_text = "📌 В РАБОТЕ"
-            user_text = "📌 Заявка ВЗЯТА В РАБОТУ! Скоро свяжемся."
-        elif action == 'close':
-            app['status'] = 'closed'
-            status_text = "✅ ЗАКРЫТА"
-            user_text = "✅ Заявка ЗАКРЫТА. Спасибо за обращение!"
-        else:
-            bot.answer_callback_query(call.id, "❌ Неизвестно")
-            return
-        
-        try:
-            old_text = call.message.text
-            if '\n\n📌 СТАТУС:' in old_text:
-                old_text = old_text.split('\n\n📌 СТАТУС:')[0]
-            if '\n\n👤 Админ:' in old_text:
-                old_text = old_text.split('\n\n👤 Админ:')[0]
-            
-            new_text = f"{old_text}\n\n📌 СТАТУС: {status_text}\n👤 Админ: @{call.from_user.username or call.from_user.first_name}"
-            
-            markup = types.InlineKeyboardMarkup(row_width=1)
-            markup.add(types.InlineKeyboardButton(f"📌 {status_text}", callback_data="status"))
-            
-            bot.edit_message_text(
-                chat_id=call.message.chat.id,
-                message_id=call.message.message_id,
-                text=new_text,
-                reply_markup=markup
-            )
-            
-            # Уведомляем пользователя
-            try:
-                bot.send_message(app['user_id'], user_text)
-            except:
-                pass
-            
-            bot.answer_callback_query(call.id, f"✅ {status_text}")
-        except Exception as e:
-            bot.answer_callback_query(call.id, f"❌ Ошибка: {str(e)[:30]}")
-        return
-    
-    if call.data == 'status':
-        bot.answer_callback_query(call.id, "📌 Текущий статус заявки")
-        return
-    
-    bot.answer_callback_query(call.id, "❓ Неизвестная команда")
-
-# ============================================
-# ===== КОМАНДЫ =====
-# ============================================
-
-@bot.message_handler(commands=['start'])
-def start(message):
-    # Проверка бана
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы в этом боте!")
-        return
-    
-    clear_state(message.from_user.id)
-    user_name = message.from_user.first_name
-    username = message.from_user.username
-    
-    save_user(message.from_user.id, username)
-    
-    welcome_text = (
-        f"🎮 *Добро пожаловать в VIBE RUSSIA!*\n\n"
-        f"👋 Привет, {user_name}!\n"
-        f"Я помогу тебе взаимодействовать с командой проекта.\n\n"
-        f"📌 *Что я умею:*\n"
-        f"• 🙋‍♂️ Принимать заявки на Хелпера\n"
-        f"• 🛠 Принимать обращения в техподдержку\n"
-        f"• ⚠️ Принимать жалобы на участников\n"
-        f"• 👤 Показывать твой профиль\n"
-        f"• 🏆 Показывать топ игроков\n\n"
-        f"👇 *Выбери нужный пункт в меню ниже:*"
-    )
-    
-    if message.from_user.id in ADMIN_IDS:
-        welcome_text += "\n\n🔐 *Админ-панель:* /admin\n📌 *Сменить версию:* /setversion"
-    
-    bot.send_message(
-        message.chat.id,
-        welcome_text,
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-@bot.message_handler(commands=['help'])
-def help_command(message):
-    help_text = (
-        "📖 *Помощь по боту VIBE RUSSIA*\n\n"
-        "📌 *Основные команды:*\n"
-        "• /start — начать работу\n"
-        "• /help — эта справка\n"
-        "• /profile — мой профиль\n"
-        "• /top — топ игроков\n"
-        "• /bonus — получить бонус\n\n"
-        "📌 *Кнопки меню:*\n"
-        "• 🙋‍♂️ Стать Хелпером\n"
-        "• 🛠 Техподдержка\n"
-        "• ⚠️ Подать жалобу\n\n"
-        "❌ *Отмена* — отменить текущее действие"
-    )
-    bot.send_message(
-        message.chat.id,
-        help_text,
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-@bot.message_handler(commands=['profile'])
-def profile_command(message):
-    """Личный кабинет пользователя"""
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    
-    user_id = str(message.from_user.id)
-    
-    # Получаем профиль
-    profile = user_profile.get(user_id, {'registered': 'Неизвестно', 'apps_count': 0, 'bonus': 0})
-    
-    # Считаем заявки пользователя
-    user_apps = [app for app in applications.values() if str(app.get('user_id')) == user_id]
-    total_apps = len(user_apps)
-    pending = len([a for a in user_apps if a.get('status') == 'pending'])
-    approved = len([a for a in user_apps if a.get('status') == 'approved'])
-    rejected = len([a for a in user_apps if a.get('status') == 'rejected'])
-    in_progress = len([a for a in user_apps if a.get('status') == 'in_progress'])
-    
-    # Бонусы
-    bonus_info = user_bonus.get(user_id, {})
-    streak = bonus_info.get('streak', 0)
-    
-    profile_text = (
-        f"👤 *Личный кабинет*\n\n"
-        f"🆔 ID: {message.from_user.id}\n"
-        f"📛 Имя: {message.from_user.first_name}\n"
-        f"📛 Юзернейм: @{message.from_user.username or 'Нет'}\n"
-        f"📅 Дата регистрации: {profile.get('registered', 'Неизвестно')[:10]}\n"
-        f"💰 Бонусов: {profile.get('bonus', 0)}\n"
-        f"🔥 Серия дней: {streak}\n\n"
-        f"📊 *Мои заявки:*\n"
-        f"• Всего: {total_apps}\n"
-        f"• ⏳ В ожидании: {pending}\n"
-        f"• 📌 В работе: {in_progress}\n"
-        f"• ✅ Одобрено: {approved}\n"
-        f"• ❌ Отклонено: {rejected}\n"
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        profile_text,
-        parse_mode='Markdown'
-    )
-
-@bot.message_handler(commands=['top'])
-def top_command(message):
-    """Топ-10 пользователей по заявкам"""
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    
-    # Считаем заявки по пользователям
-    user_apps_count = {}
-    for app in applications.values():
-        user_id = str(app.get('user_id'))
-        if user_id not in user_apps_count:
-            user_apps_count[user_id] = 0
-        user_apps_count[user_id] += 1
-    
-    # Сортируем
-    sorted_users = sorted(user_apps_count.items(), key=lambda x: x[1], reverse=True)[:10]
-    
-    if not sorted_users:
-        bot.send_message(
-            message.chat.id,
-            "📭 *Пока нет заявок*\n\nСтань первым, кто подаст заявку!",
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Формируем топ
-    text = "🏆 *ТОП-10 ИГРОКОВ*\n\n"
-    medals = ["🥇", "🥈", "🥉", "4️⃣", "5️⃣", "6️⃣", "7️⃣", "8️⃣", "9️⃣", "🔟"]
-    
-    for i, (user_id, count) in enumerate(sorted_users):
-        # Пытаемся получить имя пользователя
-        user_info = users.get(user_id, {})
-        username = user_info.get('username', user_id)
-        if username:
-            username = f"@{username}"
-        else:
-            username = f"ID: {user_id}"
-        
-        medal = medals[i] if i < len(medals) else f"{i+1}."
-        text += f"{medal} {username} — {count} заявок\n"
-    
-    bot.send_message(
-        message.chat.id,
-        text,
-        parse_mode='Markdown'
-    )
-
-@bot.message_handler(commands=['bonus'])
-def bonus_command(message):
-    """Ежедневный бонус"""
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    
-    user_id = str(message.from_user.id)
-    today = datetime.now().strftime('%Y-%m-%d')
-    
-    # Инициализация
-    if user_id not in user_bonus:
-        user_bonus[user_id] = {'last_bonus': None, 'streak': 0}
-    
-    # Проверяем, получал ли уже сегодня
-    if user_bonus[user_id]['last_bonus'] == today:
-        bot.send_message(
-            message.chat.id,
-            "⏳ *Ты уже получил бонус сегодня!*\n\n"
-            "Приходи завтра за новым бонусом! 🌟",
-            parse_mode='Markdown'
-        )
-        return
-    
-    # Считаем бонус
-    yesterday = (datetime.now() - timedelta(days=1)).strftime('%Y-%m-%d')
-    if user_bonus[user_id]['last_bonus'] == yesterday:
-        user_bonus[user_id]['streak'] += 1
-    else:
-        user_bonus[user_id]['streak'] = 1
-    
-    user_bonus[user_id]['last_bonus'] = today
-    
-    # Бонус растёт с серией
-    base_bonus = 10
-    streak_bonus = user_bonus[user_id]['streak'] * 2
-    total_bonus = base_bonus + streak_bonus
-    
-    # Сохраняем в профиль
-    if user_id in user_profile:
-        user_profile[user_id]['bonus'] = user_profile[user_id].get('bonus', 0) + total_bonus
-    
-    bot.send_message(
-        message.chat.id,
-        f"🎁 *Ежедневный бонус!*\n\n"
-        f"💰 Ты получил *{total_bonus} монет*!\n"
-        f"🔥 Серия: *{user_bonus[user_id]['streak']} дней*\n"
-        f"📅 Приходи завтра за новым бонусом!\n\n"
-        f"💡 *Бонус растёт с каждым днём!*",
-        parse_mode='Markdown'
-    )
-
-@bot.message_handler(commands=['admin'])
-def admin_panel(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ У вас нет прав администратора!")
-        return
-    
-    markup = types.InlineKeyboardMarkup(row_width=2)
-    markup.add(
-        types.InlineKeyboardButton("📋 Все заявки", callback_data="admin_all"),
-        types.InlineKeyboardButton("⏳ В ожидании", callback_data="admin_pending"),
-        types.InlineKeyboardButton("📊 Статистика", callback_data="admin_stats"),
-        types.InlineKeyboardButton("🗑 Очистить все", callback_data="admin_clear")
-    )
-    
-    bot.send_message(
-        message.chat.id,
-        f"🔐 *Админ-панель*\n\n"
-        f"🤖 Версия: v{BOT_VERSION}\n"
-        f"👥 Пользователей: {len(users)}\n"
-        f"🚫 Забанено: {len(BANNED_USERS)}\n\n"
-        f"Выберите действие:",
-        parse_mode='Markdown',
-        reply_markup=markup
-    )
-
-@bot.message_handler(commands=['setversion'])
-def set_version(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ У вас нет прав администратора!")
-        return
-    
-    global BOT_VERSION
-    
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(
-            message,
-            f"📌 *Текущая версия:* v{BOT_VERSION}\n\n"
-            f"📝 *Как изменить:*\n"
-            f"`/setversion 2.1.0`\n\n"
-            f"💡 *Пример:* `/setversion 3.0.0`",
-            parse_mode='Markdown'
-        )
-        return
-    
-    new_version = args[1]
-    old_version = BOT_VERSION
-    BOT_VERSION = new_version
-    
-    notify_text = (
-        f"🔄 *Обновление бота!*\n\n"
-        f"Бот VIBE RUSSIA обновлён до версии *v{new_version}*\n\n"
-        f"📌 *Что нового:*\n"
-        f"• Улучшена стабильность\n"
-        f"• Добавлен личный кабинет\n"
-        f"• Добавлен топ игроков\n"
-        f"• Добавлены ежедневные бонусы\n\n"
-        f"Спасибо, что вы с нами! ❤️"
-    )
-    
-    count = notify_all_users(notify_text)
-    
-    bot.reply_to(
-        message,
-        f"✅ *Версия обновлена!*\n\n"
-        f"📌 *Старая версия:* v{old_version}\n"
-        f"📌 *Новая версия:* v{new_version}\n"
-        f"👥 *Уведомлено пользователей:* {count}\n\n"
-        f"Все пользователи получили уведомление! 🎉",
-        parse_mode='Markdown'
-    )
-
-@bot.message_handler(commands=['ban'])
-def ban_user(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "❌ Используйте: /ban ID причина")
-        return
-    try:
-        user_id = int(args[1])
-    except:
-        bot.reply_to(message, "❌ ID должен быть числом!")
-        return
-    reason = " ".join(args[2:]) if len(args) > 2 else "Без причины"
-    
-    if user_id in BANNED_USERS:
-        bot.reply_to(message, f"⚠️ Пользователь {user_id} уже забанен")
-        return
-    
-    BANNED_USERS.append(user_id)
-    bot.reply_to(message, f"✅ Пользователь {user_id} забанен!\nПричина: {reason}")
-    try:
-        bot.send_message(user_id, f"⛔ Вы заблокированы!\nПричина: {reason}")
-    except:
-        pass
-
-@bot.message_handler(commands=['unban'])
-def unban_user(message):
-    if message.from_user.id not in ADMIN_IDS:
-        return
-    args = message.text.split()
-    if len(args) < 2:
-        bot.reply_to(message, "❌ Используйте: /unban ID")
-        return
-    try:
-        user_id = int(args[1])
-    except:
-        bot.reply_to(message, "❌ ID должен быть числом!")
-        return
-    
-    if user_id in BANNED_USERS:
-        BANNED_USERS.remove(user_id)
-        bot.reply_to(message, f"✅ Пользователь {user_id} разбанен!")
-    else:
-        bot.reply_to(message, f"⚠️ Пользователь {user_id} не в черном списке")
-
-# ============================================
-# ===== КНОПКИ МЕНЮ =====
-# ============================================
-
-@bot.message_handler(func=lambda msg: msg.text == "🙋‍♂️ Стать Хелпером")
-def start_helper(message):
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    set_state(message.from_user.id, 'helper_name')
-    bot.send_message(
-        message.chat.id,
-        "📝 *Заявка на Хелпера*\n\nВведите ваши *Имя и Фамилию*:",
-        parse_mode='Markdown',
-        reply_markup=get_cancel_menu()
-    )
-
-@bot.message_handler(func=lambda msg: msg.text == "🛠 Техподдержка")
-def start_support(message):
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    set_state(message.from_user.id, 'support_problem')
-    bot.send_message(
-        message.chat.id,
-        "🔧 *Обращение в техподдержку*\n\nОпишите проблему. Можно приложить скриншот.",
-        parse_mode='Markdown',
-        reply_markup=get_cancel_menu()
-    )
-
-@bot.message_handler(func=lambda msg: msg.text == "⚠️ Подать жалобу")
-def start_complain(message):
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    set_state(message.from_user.id, 'complain_against')
-    bot.send_message(
-        message.chat.id,
-        "⚠️ *Подача жалобы*\n\nУкажите ник или ID человека:",
-        parse_mode='Markdown',
-        reply_markup=get_cancel_menu()
-    )
-
-@bot.message_handler(func=lambda msg: msg.text == "ℹ️ О боте")
-def about(message):
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы!")
-        return
-    about_text = (
-        "🤖 *VIBE RUSSIA Bot*\n\n"
-        f"📌 *Версия:* v{BOT_VERSION}\n"
-        f"📅 *Дата сборки:* {datetime.now().strftime('%d.%m.%Y')}\n\n"
-        "📋 *Назначение:*\n"
-        "• Прием заявок на Хелперов\n"
-        "• Обработка обращений в техподдержку\n"
-        "• Прием жалоб\n\n"
-        f"👥 *Всего пользователей:* {len(users)}\n"
-        f"🚫 *Забанено:* {len(BANNED_USERS)}\n\n"
-        "💡 *Разработано для VIBE RUSSIA*\n"
-        "❤️ Спасибо, что вы с нами!"
-    )
-    bot.send_message(
-        message.chat.id,
-        about_text,
-        parse_mode='Markdown',
-        reply_markup=get_main_menu()
-    )
-
-@bot.message_handler(func=lambda msg: msg.text == "👤 Мой профиль")
-def profile_button(message):
-    profile_command(message)
-
-@bot.message_handler(func=lambda msg: msg.text == "🏆 Топ игроков")
-def top_button(message):
-    top_command(message)
-
-@bot.message_handler(func=lambda msg: msg.text == "❌ Отмена")
-def cancel_action(message):
-    clear_state(message.from_user.id)
-    bot.send_message(
-        message.chat.id,
-        "❌ Действие отменено.",
-        reply_markup=get_main_menu()
-    )
-
-# ============================================
-# ===== АВТО-ОТВЕТЫ =====
-# ============================================
-
-@bot.message_handler(func=lambda msg: msg.text and msg.text.lower() in AUTO_REPLIES)
-def auto_reply(message):
-    if message.from_user.id in BANNED_USERS:
-        return
-    reply = AUTO_REPLIES.get(message.text.lower())
-    if reply:
-        bot.reply_to(message, reply)
-
-# ============================================
-# ===== ОБРАБОТКА СООБЩЕНИЙ =====
-# ============================================
-
-@bot.message_handler(func=lambda msg: True, content_types=['text', 'photo', 'document'])
-def handle_all_messages(message):
-    user_id = str(message.from_user.id)
-    
-    # Проверка бана
-    if message.from_user.id in BANNED_USERS:
-        bot.send_message(message.chat.id, "⛔ Вы заблокированы в этом боте!")
-        return
-    
-    state = get_state(user_id)
-    
-    save_user(message.from_user.id, message.from_user.username)
-    
-    if not state:
-        if message.text in ["🙋‍♂️ Стать Хелпером", "🛠 Техподдержка", "⚠️ Подать жалобу", "ℹ️ О боте", "👤 Мой профиль", "🏆 Топ игроков", "❌ Отмена"]:
-            return
-        
-        # Проверяем команды админа
-        if message.text and message.text.startswith('/'):
-            return
-        
-        bot.send_message(
-            message.chat.id,
-            "❗ Используйте кнопки меню или команду /start",
-            reply_markup=get_main_menu()
-        )
-        return
-    
-    if is_cancel(message.text):
-        clear_state(user_id)
-        bot.send_message(
-            message.chat.id,
-            "❌ Действие отменено.",
-            reply_markup=get_main_menu()
-        )
-        return
-    
-    # ===== АНКЕТА ХЕЛПЕРА =====
-    if state == 'helper_name':
-        set_data(user_id, 'name', message.text)
-        set_state(user_id, 'helper_age')
-        bot.send_message(message.chat.id, "📅 Введите *возраст*:", parse_mode='Markdown')
-        return
-    
-    if state == 'helper_age':
-        if not message.text.isdigit():
-            bot.send_message(message.chat.id, "⛔ Введите возраст *цифрами*:", parse_mode='Markdown')
-            return
-        set_data(user_id, 'age', message.text)
-        set_state(user_id, 'helper_experience')
-        bot.send_message(message.chat.id, "💬 Расскажите о *опыте*:", parse_mode='Markdown')
-        return
-    
-    if state == 'helper_experience':
-        set_data(user_id, 'experience', message.text)
-        set_state(user_id, 'helper_contact')
-        bot.send_message(message.chat.id, "📱 Оставьте *контакт* для связи:", parse_mode='Markdown')
-        return
-    
-    if state == 'helper_contact':
-        set_data(user_id, 'contact', message.text)
-        data = get_data(user_id)
-        text = (
-            f"👤 *Имя:* {data.get('name')}\n"
-            f"📅 *Возраст:* {data.get('age')}\n"
-            f"💬 *Опыт:* {data.get('experience')}\n"
-            f"📱 *Контакт:* {data.get('contact')}"
-        )
-        user_name = message.from_user.username or message.from_user.first_name
-        send_application_to_channel("📋 ЗАЯВКА НА ХЕЛПЕРА", text, message.from_user.id, user_name)
-        clear_state(user_id)
-        bot.send_message(
-            message.chat.id,
-            "✅ *Заявка отправлена!*\n\nМы свяжемся с вами.",
-            parse_mode='Markdown',
-            reply_markup=get_main_menu()
-        )
-        return
-    
-    # ===== ТЕХПОДДЕРЖКА =====
-    if state == 'support_problem':
-        if message.text:
-            text = message.text
-        elif message.photo:
-            text = "🖼 Скриншот приложен"
-        elif message.document:
-            text = "📎 Файл приложен"
-        else:
-            text = "Сообщение без текста"
-        
-        user_name = message.from_user.username or message.from_user.first_name
-        send_application_to_channel("🔧 ТЕХПОДДЕРЖКА", f"📝 {text}", message.from_user.id, user_name)
-        clear_state(user_id)
-        bot.send_message(
-            message.chat.id,
-            "✅ *Обращение отправлено!*\n\nТехподдержка свяжется с вами.",
-            parse_mode='Markdown',
-            reply_markup=get_main_menu()
-        )
-        return
-    
-    # ===== ЖАЛОБА =====
-    if state == 'complain_against':
-        set_data(user_id, 'against', message.text)
-        set_state(user_id, 'complain_reason')
-        bot.send_message(message.chat.id, "📝 Опишите *причину* жалобы:", parse_mode='Markdown')
-        return
-    
-    if state == 'complain_reason':
-        set_data(user_id, 'reason', message.text)
-        set_state(user_id, 'complain_evidence')
-        bot.send_message(message.chat.id, "📎 Приложите *доказательства* или напишите 'нет':", parse_mode='Markdown')
-        return
-    
-    if state == 'complain_evidence':
-        if message.text:
-            evidence = message.text
-        elif message.photo:
-            evidence = "🖼 Скриншот приложен"
-        elif message.document:
-            evidence = "📎 Файл приложен"
-        else:
-            evidence = "Без доказательств"
-        
-        set_data(user_id, 'evidence', evidence)
-        data = get_data(user_id)
-        text = (
-            f"👤 *Жалоба на:* {data.get('against')}\n"
-            f"📝 *Причина:* {data.get('reason')}\n"
-            f"📎 *Доказательства:* {data.get('evidence')}"
-        )
-        user_name = message.from_user.username or message.from_user.first_name
-        send_application_to_channel("⚠️ ЖАЛОБА", text, message.from_user.id, user_name)
-        clear_state(user_id)
-        bot.send_message(
-            message.chat.id,
-            "✅ *Жалоба отправлена!*\n\nАдминистрация рассмотрит её.",
-            parse_mode='Markdown',
-            reply_markup=get_main_menu()
-        )
-        return
-    
-    clear_state(user_id)
-    bot.send_message(
-        message.chat.id,
-        "❗ Что-то пошло не так. Начните заново с /start",
-        reply_markup=get_main_menu()
-    )
-
-# ============================================
-# ===== ЗАПУСК =====
-# ============================================
-
-def run_bot():
-    print("🤖 Запуск Telegram бота...")
-    while True:
-        try:
-            bot.infinity_polling(timeout=60)
-        except Exception as e:
-            print(f"❌ Ошибка: {e}")
-            time.sleep(5)
-
-if __name__ == "__main__":
-    print("🚀 Запуск VIBE RUSSIA Bot...")
-    
+    # Запускаем бота в фоновом потоке
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    port = int(os.environ.get("PORT", 8080))
-    print(f"🌐 Запуск Flask сервера на порту {port}")
-    app.run(host='0.0.0.0', port=port)
+    # Запускаем Flask
+    port = int(os.environ.get("PORT", 5000))
+    app.run(host="0.0.0.0", port=port)
