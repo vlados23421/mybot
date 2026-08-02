@@ -1,4 +1,4 @@
 aiogram==3.13.1
 Flask==3.0.3
-openai==0.28.1
+openai
 python-dotenv==1.0.1
