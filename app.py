@@ -15,9 +15,13 @@ from openai import OpenAI
 
 # --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
-ADMIN_IDS = [123456789]  # Замените на ваш Telegram ID
-REFERRAL_BONUS = 2  # Билетов за приглашение
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "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)
+
+if not BOT_TOKEN:
+    raise ValueError("❌ TELEGRAM_BOT_TOKEN не задан!")
+
+print(f"🤖 Bot token: {BOT_TOKEN[:10]}...")
+print(f"🔑 OpenRouter key: {OPENROUTER_API_KEY[:10]}...")
 
 if not BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN не задан!")
