@@ -516,14 +516,22 @@ def admin_stats():
     except Exception as e:
         return jsonify({"status": "error", "message": str(e)}), 500
 
-# --- ЗАПУСК БОТА ---
-def run_bot():
-    try:
-        asyncio.run(dp.start_polling(bot))
-    except Exception as e:
-        print(f"❌ Ошибка бота: {e}")
+# --- ЗАПУСК БОТА ЧЕРЕЗ WEBHOOK (ДЛЯ RENDER) ---
+
+async def on_startup(dispatcher: Dispatcher, bot: Bot):
+    # При запуске говорим Telegram'у, куда слать запросы
+    # Важно: WEBHOOK_URL должен совпадать с вашим адресом на Render
+    WEBHOOK_URL = "https://mybot-hk5p.onrender.com"
+    await bot.set_webhook(WEBHOOK_URL)
+    print(f"✅ Webhook установлен на {WEBHOOK_URL}")
+
+async def on_shutdown(dispatcher: Dispatcher, bot: Bot):
+    # Удаляем вебхук при остановке
+    await bot.delete_webhook()
+    await dispatcher.storage.close()
 
 if __name__ == "__main__":
+    # Создаем админов (как было у вас)
     for admin_id in ADMIN_IDS:
         try:
             create_user(admin_id, "Admin")
@@ -531,10 +539,19 @@ if __name__ == "__main__":
             print(f"✅ Admin {admin_id} создан с Premium")
         except:
             pass
+
+    print("🚀 Запуск бота через Webhook...")
+
+    # Берем порт из окружения Render (или 10000 по умолчанию)
+    port = int(os.environ.get("PORT", 10000))
     
-    print("🚀 Запуск бота...")
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    port = int(os.environ.get("PORT", 5000))
-    app.run(host="0.0.0.0", port=port)
+    # Запускаем aiogram с вебхуком вместо pollng
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path="",
+        on_startup=on_startup,
+        on_shutdown=on_shutdown,
+        skip_updates=True,
+        host="0.0.0.0",
+        port=port,
+                        )
