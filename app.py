@@ -3,6 +3,7 @@ import sqlite3
 import telebot
 from datetime import datetime, timedelta
 from flask import Flask
+from threading import Thread  # <--- ВОТ ЭТА СТРОКА БЫЛА ПРОПУЩЕНА В ПРОШЛЫЙ РАЗ
 
 # ===========================
 # 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
@@ -13,7 +14,7 @@ REFERRAL_BONUS = 2
 
 bot = telebot.TeleBot(BOT_TOKEN)
 
-# Flask нужен только для того, чтобы Render не усыпил бота (заглушка)
+# Flask - заглушка для порта Render
 app = Flask(__name__)
 
 # ===========================
@@ -103,12 +104,10 @@ def send_welcome(message):
     user_id = message.from_user.id
     username = message.from_user.username or "Unknown"
     
-    # Проверяем реферала
     args = message.text.split()
     referred_by = None
     if len(args) > 1:
         code = args[1]
-        # Проверка кода (упрощенно)
         if code.isdigit() and int(code) != user_id:
             referred_by = int(code)
 
@@ -172,7 +171,6 @@ def forward_to_admin(message):
         bot.send_message(user_id, "❌ У вас закончились билеты. Обратитесь к администратору.")
         return
 
-    # Пересылаем админу
     forward_msg = f"""
 ✉️ **Новое обращение от пользователя**
 
@@ -199,7 +197,10 @@ def forward_to_admin(message):
 # ===========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    # Запускаем Flask для удержания порта, а бот крутится в фоне
-    from threading import Thread
+    
+    # Запускаем бота в отдельном потоке
+    print("🚀 Запуск бота на telebot...")
     Thread(target=bot.infinity_polling, daemon=True).start()
+    
+    # Держим порт открытым для Render
     app.run(host="0.0.0.0", port=port)
