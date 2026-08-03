@@ -1,29 +1,24 @@
 import os
-import asyncio
 import threading
 import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask
-from aiogram import Bot, Dispatcher, types
-from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
-from aiogram.filters import Command
-from aiogram.fsm.storage.memory import MemoryStorage
+from aiogram import Bot, Dispatcher, types, executor
+from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
 from openai import OpenAI
 
-# ==========================================
-# 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
-# ==========================================
-BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo" 
+# --- ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА ---
+BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
 OPENROUTER_API_KEY = "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"
-ADMIN_IDS = [8915047087] 
+ADMIN_IDS = [8915047087]
 REFERRAL_BONUS = 2
 
-# ==========================================
-# 2. ИНИЦИАЛИЗАЦИЯ
-# ==========================================
+if not BOT_TOKEN:
+    raise ValueError("❌ Токен бота не задан!")
+
+# --- ИНИЦИАЛИЗАЦИЯ ---
 bot = Bot(token=BOT_TOKEN)
-storage = MemoryStorage()
-dp = Dispatcher(storage=storage)
+dp = Dispatcher(bot)
 app = Flask(__name__)
 
 client = OpenAI(
@@ -31,9 +26,7 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# ==========================================
-# 3. БАЗА ДАННЫХ
-# ==========================================
+# --- БАЗА ДАННЫХ ---
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
@@ -111,22 +104,22 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# ==========================================
-# 4. КЛАВИАТУРЫ И ОБРАБОТЧИКИ
-# ==========================================
+# --- КЛАВИАТУРЫ ---
 def main_menu():
-    keyboard = InlineKeyboardMarkup(inline_keyboard=[
-        [InlineKeyboardButton(text="🤖 Задать вопрос AI", callback_data="ask_ai")],
-        [InlineKeyboardButton(text="🎟 Мои билеты", callback_data="my_tickets")],
-        [InlineKeyboardButton(text="👥 Реферальная система", callback_data="referral")],
-        [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")],
-        [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
-        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
-    ])
+    keyboard = InlineKeyboardMarkup(row_width=1)
+    keyboard.add(
+        InlineKeyboardButton("🤖 Задать вопрос AI", callback_data="ask_ai"),
+        InlineKeyboardButton("🎟 Мои билеты", callback_data="my_tickets"),
+        InlineKeyboardButton("👥 Реферальная система", callback_data="referral"),
+        InlineKeyboardButton("💎 Купить Premium", callback_data="buy_premium"),
+        InlineKeyboardButton("📊 Статистика", callback_data="stats"),
+        InlineKeyboardButton("❓ Помощь", callback_data="help")
+    )
     return keyboard
 
-@dp.message(Command("start"))
-async def start_command(message: Message):
+# --- ОБРАБОТЧИКИ ---
+@dp.message_handler(commands=['start'])
+async def start_command(message: types.Message):
     user_id = message.from_user.id
     username = message.from_user.username or "Unknown"
     
@@ -147,7 +140,8 @@ async def start_command(message: Message):
     is_premium = check_premium(user_id)
     referrals_count = user[8] if user else 0
     
-    bot_username = (await bot.get_me()).username
+    bot_user = await bot.get_me()
+    bot_username = bot_user.username
     
     welcome_text = f"""
 👋 **Добро пожаловать!**
@@ -159,32 +153,14 @@ async def start_command(message: Message):
 
 🔗 **Реферальная ссылка:**
 `https://t.me/{bot_username}?start={user_id}`
-
-🎁 За каждого приглашенного вы и Ваш друг получаете по `{REFERRAL_BONUS}` билета!
 """
     await message.answer(welcome_text, reply_markup=main_menu())
 
-@dp.message(Command("help"))
-async def help_command(message: Message):
-    help_text = """
-❓ **Помощь**
+@dp.message_handler(commands=['help'])
+async def help_command(message: types.Message):
+    await message.answer("❓ **Помощь**\n\n🤖 AI-помощник — задайте любой вопрос\n🎟 Билеты — за трату при регистрации\n👥 Реферальная система — приглашайте друзей\n💎 Premium — безлимитный AI на 30 дней", reply_markup=main_menu())
 
-🤖 AI-помощник — задайте любой вопрос
-🎟 Билеты — за трату при регистрации
-👥 Реферальная система — приглашайте друзей
-💎 Premium — безлимитный AI на 30 дней
-"""
-    await message.answer(help_text, reply_markup=main_menu())
-
-# ==========================================
-# 5. ЗАПУСК С ПОРТОМ (ДЛЯ БЕСПЛАТНОГО RENDER)
-# ==========================================
-def run_bot():
-    try:
-        asyncio.run(dp.start_polling(bot))
-    except Exception as e:
-        print(f"❌ Ошибка бота: {e}")
-
+# --- ЗАПУСК ---
 if __name__ == "__main__":
     for admin_id in ADMIN_IDS:
         try:
@@ -194,12 +170,12 @@ if __name__ == "__main__":
         except:
             pass
 
-    print("🚀 Запуск бота...")
-    
-    # Запускаем бота в фоновом потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # ОТКРЫВАЕМ ПОРТ 10000, ЧТОБЫ RENDER НЕ УБИЛ НАС
     port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    print("🚀 Запуск бота...")
+    executor.start_webhook(
+        dispatcher=dp,
+        webhook_path='',
+        on_startup=None,
+        host='0.0.0.0',
+        port=port,
+    )
