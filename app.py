@@ -5,7 +5,9 @@ from datetime import datetime, timedelta
 from flask import Flask, request, jsonify
 from openai import OpenAI
 
-# --- ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА ---
+# ==========================================
+# 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
+# ==========================================
 BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
 OPENROUTER_API_KEY = "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"
 ADMIN_IDS = [8915047087]
@@ -14,9 +16,14 @@ REFERRAL_BONUS = 2
 TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
 
 app = Flask(__name__)
-client = OpenAI(api_key=OPENROUTER_API_KEY, base_url="https://openrouter.ai/api/v1")
+client = OpenAI(
+    api_key=OPENROUTER_API_KEY,
+    base_url="https://openrouter.ai/api/v1"
+)
 
-# ========== БАЗА ДАННЫХ ==========
+# ==========================================
+# 2. БАЗА ДАННЫХ
+# ==========================================
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
@@ -52,7 +59,11 @@ def create_user(user_id, username, referred_by=None):
     cur = conn.cursor()
     referral_code = f"ref{user_id}"
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute('INSERT INTO users (user_id, username, created_at, referral_code, referred_by) VALUES (?, ?, ?, ?, ?)', (user_id, username, created_at, referral_code, referred_by))
+    cur.execute('''
+    INSERT INTO users (user_id, username, created_at, referral_code, referred_by)
+    VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, username, created_at, referral_code, referred_by))
+    
     if referred_by and referred_by != user_id:
         cur.execute("UPDATE users SET tickets = tickets + ? WHERE user_id = ?", (REFERRAL_BONUS, user_id))
         cur.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
@@ -75,17 +86,51 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# ========== ФУНКЦИЯ ОТПРАВКИ СООБЩЕНИЙ ==========
+# ==========================================
+# 3. ФУНКЦИЯ ОТПРАВКИ СООБЩЕНИЙ
+# ==========================================
 def send_message(chat_id, text, keyboard=None):
-    data = {"chat_id": chat_id, "text": text, "parse_mode": "Markdown"}
+    data = {
+        "chat_id": chat_id,
+        "text": text,
+        "parse_mode": "Markdown"
+    }
     if keyboard:
         data["reply_markup"] = keyboard
     requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=data)
 
-# ========== ОБРАБОТЧИК ВЕБХУКА ==========
+# ==========================================
+# 4. ГЛАВНЫЙ ОБРАБОТЧИК (WEBHOOK)
+# ==========================================
 @app.route("/", methods=["POST"])
 def webhook():
     data = request.get_json()
+    
+    # --- Если это нажатие на кнопку (Callback) ---
+    if "callback_query" in data:
+        callback = data["callback_query"]
+        chat_id = callback["message"]["chat"]["id"]
+        callback_data = callback["data"]
+        
+        # Подтверждаем, что кнопка нажата
+        requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
+        
+        # --- ЛОГИКА КНОПОК ---
+        if callback_data == "ask_ai":
+            send_message(chat_id, "🤖 Напишите ваш вопрос. Я отвечу с помощью AI.")
+        elif callback_data == "my_tickets":
+            user = get_user(chat_id)
+            tickets = user[3] if user else 0
+            send_message(chat_id, f"🎟 **Ваши билеты:** `{tickets}`")
+        elif callback_data == "referral":
+            send_message(chat_id, "👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
+        elif callback_data == "buy_premium":
+            send_message(chat_id, "💎 Функция Premium пока в разработке.")
+        elif callback_data == "help":
+            send_message(chat_id, "❓ **Помощь:**\n🤖 AI - задайте вопрос\n🎟 Билеты - для запросов\n👥 Рефералы - получайте билеты")
+        return "OK", 200
+
+    # --- Если это обычное текстовое сообщение ---
     if "message" not in data:
         return "OK", 200
     
@@ -95,18 +140,16 @@ def webhook():
     user_id = msg["from"]["id"]
     username = msg["from"].get("username", "Unknown")
 
-    # Если пользователь есть, создаем
     if not get_user(user_id):
         create_user(user_id, username)
 
-    # ===== Команда /start =====
+    # === Команда /start ===
     if text.startswith("/start"):
         user = get_user(user_id)
         tickets = user[3] if user else 0
         is_premium = check_premium(user_id)
         referrals_count = user[8] if user else 0
         
-        # Кнопки
         keyboard = {
             "inline_keyboard": [
                 [{"text": "🤖 Задать вопрос AI", "callback_data": "ask_ai"}],
@@ -127,22 +170,52 @@ def webhook():
 """
         send_message(chat_id, welcome_text, keyboard)
     
-    # ===== Команда /help =====
+    # === Команда /help ===
     elif text.startswith("/help"):
-        help_text = """
-❓ **Помощь**
+        send_message(chat_id, "❓ **Помощь:**\n🤖 AI - задайте вопрос\n🎟 Билеты - для запросов\n👥 Рефералы - получайте билеты")
 
-🤖 AI-помощник — задайте любой вопрос
-🎟 Билеты — за трату при регистрации
-👥 Реферальная система — приглашайте друзей
-💎 Premium — безлимитный AI на 30 дней
-"""
-        send_message(chat_id, help_text)
+    # === Обычный текст (ответ AI) ===
+    elif text:
+        user = get_user(user_id)
+        if not user:
+            create_user(user_id, username)
+            user = get_user(user_id)
+
+        tickets = user[3] if user else 0
+        is_premium = check_premium(user_id)
+
+        if tickets <= 0 and not is_premium:
+            send_message(chat_id, "❌ У вас закончились билеты. Пополните баланс у администратора.")
+            return "OK", 200
+
+        # Показываем статус
+        send_message(chat_id, "⏳ Думаю над ответом...")
+
+        try:
+            response = client.chat.completions.create(
+                model="gryphe/mythomax-l2-13b",
+                messages=[{"role": "user", "content": text}]
+            )
+            answer = response.choices[0].message.content
+            send_message(chat_id, f"🤖 **Ответ AI:**\n\n{answer}")
+            
+            # Списание билета
+            if not is_premium:
+                conn = sqlite3.connect('bot_database.db')
+                cur = conn.cursor()
+                cur.execute("UPDATE users SET tickets = tickets - 1 WHERE user_id = ?", (user_id,))
+                conn.commit()
+                conn.close()
+                
+        except Exception as e:
+            send_message(chat_id, f"❌ Ошибка AI: {str(e)}")
 
     return "OK", 200
 
-# ========== ЗАПУСК ==========
+# ==========================================
+# 5. ЗАПУСК СЕРВЕРА
+# ==========================================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    print("🚀 Бот запущен и ждет сообщений!")
+    print("🚀 Бот успешно запущен!")
     app.run(host="0.0.0.0", port=port)
