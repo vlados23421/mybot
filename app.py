@@ -10,11 +10,11 @@ from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from aiogram.fsm.context import FSMContext
 from aiogram.fsm.state import State, StatesGroup
-from aiogram.utils import executor
+from openai import OpenAI
 
 # --- КОНФИГУРАЦИЯ ---
 BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY", "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")
+OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
 ADMIN_IDS = [8915047087]  # ЗАМЕНИТЕ НА ВАШ ID
 REFERRAL_BONUS = 2
 
@@ -42,213 +42,94 @@ def init_db():
     cur = conn.cursor()
     
     cur.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            user_id INTEGER PRIMARY KEY,
-            username TEXT,
-            tickets INTEGER DEFAULT 3,
-            is_premium BOOLEAN DEFAULT 0,
-            premium_until TEXT,
-            total_requests INTEGER DEFAULT 0,
-            created_at TEXT,
-            referred_by INTEGER DEFAULT NULL,
-            referral_code TEXT UNIQUE,
-            referrals_count INTEGER DEFAULT 0
-        )
+    CREATE TABLE IF NOT EXISTS users (
+        user_id INTEGER PRIMARY KEY,
+        username TEXT,
+        tickets INTEGER DEFAULT 3,
+        is_premium BOOLEAN DEFAULT 0,
+        premium_until TEXT,
+        total_requests INTEGER DEFAULT 0,
+        created_at TEXT,
+        referred_by INTEGER DEFAULT NULL,
+        referral_code TEXT UNIQUE,
+        referrals_count INTEGER DEFAULT 0
+    )
     ''')
-    
+
     cur.execute('''
-        CREATE TABLE IF NOT EXISTS history (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            question TEXT,
-            answer TEXT,
-            timestamp TEXT,
-            FOREIGN KEY (user_id) REFERENCES users (user_id)
-        )
+    CREATE TABLE IF NOT EXISTS history (
+        id INTEGER PRIMARY KEY AUTOINCREMENT,
+        user_id INTEGER,
+        question TEXT,
+        answer TEXT,
+        timestamp TEXT
+    )
     ''')
-    
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS payments (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            user_id INTEGER,
-            amount INTEGER,
-            status TEXT,
-            payment_id TEXT,
-            created_at TEXT
-        )
-    ''')
-    
-    cur.execute('''
-        CREATE TABLE IF NOT EXISTS referrals (
-            id INTEGER PRIMARY KEY AUTOINCREMENT,
-            referrer_id INTEGER,
-            referred_id INTEGER,
-            bonus_tickets INTEGER,
-            created_at TEXT,
-            FOREIGN KEY (referrer_id) REFERENCES users (user_id),
-            FOREIGN KEY (referred_id) REFERENCES users (user_id)
-        )
-    ''')
-    
     conn.commit()
     conn.close()
 
 init_db()
 
-# --- ФУНКЦИИ ДЛЯ РАБОТЫ С БД ---
 def get_user(user_id):
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
-    cur.execute('SELECT * FROM users WHERE user_id = ?', (user_id,))
+    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
     user = cur.fetchone()
     conn.close()
     return user
 
-def get_user_by_referral_code(code):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    cur.execute('SELECT user_id FROM users WHERE referral_code = ?', (code,))
-    result = cur.fetchone()
-    conn.close()
-    return result[0] if result else None
-
 def create_user(user_id, username, referred_by=None):
-    import random
-    import string
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
     
-    referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
-    while True:
-        cur.execute('SELECT user_id FROM users WHERE referral_code = ?', (referral_code,))
-        if not cur.fetchone():
-            break
-        referral_code = ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+    # Генерация реферального кода
+    referral_code = f"ref{user_id}"
+    
+    # Время создания
+    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     cur.execute('''
-        INSERT OR IGNORE INTO users (user_id, username, tickets, created_at, referred_by, referral_code, referrals_count)
-        VALUES (?, ?, 3, ?, ?, ?, 0)
-    ''', (user_id, username, datetime.now().isoformat(), referred_by, referral_code))
+    INSERT INTO users (user_id, username, created_at, referral_code, referred_by)
+    VALUES (?, ?, ?, ?, ?)
+    ''', (user_id, username, created_at, referral_code, referred_by))
     
-    conn.commit()
-    conn.close()
+    # Если пользователь пришел по реферальной ссылке, даем бонусы
+    if referred_by and referred_by != user_id:
+        # Создаем бонус в историю (упрощенно)
+        cur.execute("UPDATE users SET tickets = tickets + ? WHERE user_id = ?", (REFERRAL_BONUS, user_id))
+        cur.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
+        conn.commit()
     
-    if referred_by:
-        add_referral_bonus(referred_by, user_id)
-    
-    return referral_code
-
-def add_referral_bonus(referrer_id, referred_id):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    
-    cur.execute('SELECT id FROM referrals WHERE referrer_id = ? AND referred_id = ?', (referrer_id, referred_id))
-    if cur.fetchone():
-        conn.close()
-        return False
-    
-    cur.execute('UPDATE users SET tickets = tickets + ?, referrals_count = referrals_count + 1 WHERE user_id = ?', 
-                (REFERRAL_BONUS, referrer_id))
-    cur.execute('UPDATE users SET tickets = tickets + ? WHERE user_id = ?', 
-                (REFERRAL_BONUS, referred_id))
-    cur.execute('INSERT INTO referrals (referrer_id, referred_id, bonus_tickets, created_at) VALUES (?, ?, ?, ?)',
-                (referrer_id, referred_id, REFERRAL_BONUS, datetime.now().isoformat()))
-    
-    conn.commit()
-    conn.close()
-    return True
-
-def update_tickets(user_id, tickets):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    cur.execute('UPDATE users SET tickets = ? WHERE user_id = ?', (tickets, user_id))
-    conn.commit()
-    conn.close()
-
-def set_premium(user_id, days=30):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    until = (datetime.now() + timedelta(days=days)).isoformat()
-    cur.execute('UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?', (until, user_id))
-    conn.commit()
     conn.close()
 
 def check_premium(user_id):
     user = get_user(user_id)
     if not user:
         return False
-    if user[3] == 1:
-        if user[4] and datetime.fromisoformat(user[4]) > datetime.now():
+    # Индекс 5 - premium_until в таблице
+    if user[5]:
+        premium_until = datetime.strptime(user[5], "%Y-%m-%d %H:%M:%S")
+        if premium_until > datetime.now():
             return True
-        else:
-            conn = sqlite3.connect('bot_database.db')
-            cur = conn.cursor()
-            cur.execute('UPDATE users SET is_premium = 0, premium_until = NULL WHERE user_id = ?', (user_id,))
-            conn.commit()
-            conn.close()
-            return False
     return False
 
-def save_history(user_id, question, answer):
+def set_premium(user_id, days):
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
-    cur.execute('INSERT INTO history (user_id, question, answer, timestamp) VALUES (?, ?, ?, ?)',
-                (user_id, question, answer, datetime.now().isoformat()))
+    premium_until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
+    cur.execute("UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?", (premium_until, user_id))
     conn.commit()
     conn.close()
-
-def increment_requests(user_id):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    cur.execute('UPDATE users SET total_requests = total_requests + 1 WHERE user_id = ?', (user_id,))
-    conn.commit()
-    conn.close()
-
-# --- STATES ДЛЯ FSM ---
-class Form(StatesGroup):
-    waiting_for_question = State()
-
-# --- AI ФУНКЦИЯ ---
-async def ask_ai(question, user_id):
-    try:
-        response = client.chat.completions.create(
-            model="deepseek/deepseek-r1:free",
-            messages=[
-                {"role": "system", "content": "Вы помощник проекта. Отвечайте на русском языке, вежливо и информативно."},
-                {"role": "user", "content": question}
-            ],
-            max_tokens=500,
-            temperature=0.7,
-            extra_headers={
-                "HTTP-Referer": "https://your-site.com",
-                "X-Title": "BEST RUSSIA Bot"
-            }
-        )
-        
-        answer = response.choices[0].message.content
-        save_history(user_id, question, answer)
-        increment_requests(user_id)
-        return answer
-        
-    except Exception as e:
-        error_msg = str(e)
-        print(f"❌ Ошибка AI: {error_msg}")
-        if "rate limit" in error_msg.lower():
-            return "⏳ Превышен лимит запросов. Попробуйте через минуту."
-        elif "credit" in error_msg.lower() or "balance" in error_msg.lower():
-            return "💳 Баланс API исчерпан. Администратор уже уведомлен."
-        else:
-            return f"❌ Извините, произошла ошибка. Попробуйте позже."
 
 # --- КЛАВИАТУРЫ ---
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Задать вопрос AI", callback_data="ask_ai")],
-        [InlineKeyboardButton(text="🎫 Мои билеты", callback_data="my_tickets")],
+        [InlineKeyboardButton(text="🎟 Мои билеты", callback_data="my_tickets")],
         [InlineKeyboardButton(text="👥 Реферальная система", callback_data="referral")],
         [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")],
         [InlineKeyboardButton(text="📊 Статистика", callback_data="stats")],
-        [InlineKeyboardButton(text="ℹ️ Помощь", callback_data="help")]
+        [InlineKeyboardButton(text="❓ Помощь", callback_data="help")]
     ])
     return keyboard
 
@@ -265,273 +146,58 @@ async def start_command(message: Message):
         referrer_id = get_user_by_referral_code(code)
         if referrer_id and referrer_id != user_id:
             referred_by = referrer_id
-    
+
     user = get_user(user_id)
     if not user:
-        referral_code = create_user(user_id, username, referred_by)
+        create_user(user_id, username, referred_by)
     else:
-        referral_code = user[7] if user[7] else None
-    
+        # Если пользователь уже есть, но пришел по ссылке повторно, обновляем инфо
+        pass
+
+    # Обновляем данные пользователя
     user = get_user(user_id)
-    tickets = user[2] if user else 0
+    tickets = user[3] if user else 0
     is_premium = check_premium(user_id)
     referrals_count = user[8] if user else 0
     
     bot_username = (await bot.get_me()).username
     
     welcome_text = f"""
-🎯 **Добро пожаловать!**
+👋 **Добро пожаловать!**
 
-👤 Ваш ID: `{user_id}`
-🎫 Билетов: {tickets}
-💎 Premium: {'✅ Активен' if is_premium else '❌ Нет'}
-👥 Приглашено: {referrals_count}
+🆔 Ваш ID: `{user_id}`
+🎟 Билетов: `{tickets}`
+💎 Premium: `{"✅ Активен" if is_premium else "❌ Нет"}`
+👥 Приглашено: `{referrals_count}` чел.
 
-📌 **Реферальная ссылка:**
-`https://t.me/{bot_username}?start={referral_code}`
+🔗 **Реферальная ссылка:**
+`https://t.me/{bot_username}?start={user_id}`
 
-👥 За каждого приглашенного вы и ваш друг получите по {REFERRAL_BONUS} билета!
+🎁 За каждого приглашенного вы и Ваш друг получаете по `{REFERRAL_BONUS}` билета!
 """
     await message.answer(welcome_text, reply_markup=main_menu())
 
 @dp.message(Command("help"))
 async def help_command(message: Message):
     help_text = """
-📖 **Помощь**
+❓ **Помощь**
 
 🤖 AI-помощник — задайте любой вопрос
-🎫 Билеты — 3 шт. при регистрации
+🎟 Билеты — за трату при регистрации
 👥 Реферальная система — приглашайте друзей
 💎 Premium — безлимитный AI на 30 дней
-
-⚠️ Каждый вопрос к AI тратит 1 билет
 """
     await message.answer(help_text, reply_markup=main_menu())
 
-# --- ОБРАБОТЧИКИ CALLBACK ---
-@dp.callback_query()
-async def handle_callback(callback: types.CallbackQuery, state: FSMContext):
-    user_id = callback.from_user.id
-    data = callback.data
-    
-    if data == "ask_ai":
-        user = get_user(user_id)
-        if not user:
-            await callback.message.answer("❌ Пользователь не найден. Используйте /start")
-            return
-        
-        tickets = user[2]
-        is_premium = check_premium(user_id)
-        
-        if is_premium:
-            await callback.message.answer("💬 Напишите ваш вопрос для AI (Premium — безлимит):")
-            await state.set_state(Form.waiting_for_question)
-            await state.update_data(ask_type="premium")
-        elif tickets > 0:
-            await callback.message.answer(f"💬 Напишите ваш вопрос для AI (Осталось билетов: {tickets}):")
-            await state.set_state(Form.waiting_for_question)
-            await state.update_data(ask_type="ticket")
-        else:
-            await callback.message.answer(
-                "❌ **У вас закончились билеты!**\n\nКупите Premium для безлимитного доступа.",
-                reply_markup=InlineKeyboardMarkup(inline_keyboard=[
-                    [InlineKeyboardButton(text="💎 Купить Premium", callback_data="buy_premium")],
-                    [InlineKeyboardButton(text="👥 Пригласить друзей", callback_data="referral")]
-                ])
-            )
-    
-    elif data == "referral":
-        user = get_user(user_id)
-        if not user:
-            await callback.message.answer("❌ Пользователь не найден")
-            return
-        
-        referral_code = user[7]
-        referrals_count = user[8]
-        bot_username = (await bot.get_me()).username
-        
-        text = f"""
-👥 **Реферальная система**
-
-🔗 Ваша ссылка:
-`https://t.me/{bot_username}?start={referral_code}`
-
-📊 Приглашено: {referrals_count} человек
-🎁 Бонус: {REFERRAL_BONUS} билетов за каждого
-
-📈 **Топ пригласивших:**
-"""
-        conn = sqlite3.connect('bot_database.db')
-        cur = conn.cursor()
-        cur.execute('SELECT username, referrals_count FROM users WHERE referrals_count > 0 ORDER BY referrals_count DESC LIMIT 5')
-        top = cur.fetchall()
-        conn.close()
-        
-        if top:
-            for i, (username, count) in enumerate(top, 1):
-                text += f"\n{i}. @{username or 'Unknown'} — {count} чел."
-        else:
-            text += "\nПока никто не приглашал. Будьте первым! 🏆"
-        
-        await callback.message.answer(text, reply_markup=main_menu())
-    
-    elif data == "my_tickets":
-        user = get_user(user_id)
-        if user:
-            is_premium = check_premium(user_id)
-            tickets = user[2]
-            text = f"""
-🎫 **Билеты:** {tickets}
-💎 **Premium:** {'✅ Активен' if is_premium else '❌ Нет'}
-👥 **Приглашено:** {user[8]}
-"""
-            await callback.message.answer(text, reply_markup=main_menu())
-    
-    elif data == "buy_premium":
-        text = """
-💎 **Premium подписка**
-
-💰 Цена: 299 ₽ / 30 дней
-
-✅ Безлимитные запросы к AI
-✅ Приоритетная поддержка
-"""
-        keyboard = InlineKeyboardMarkup(inline_keyboard=[
-            [InlineKeyboardButton(text="💰 Оплатить", callback_data="pay_usdt")],
-            [InlineKeyboardButton(text="🔙 Назад", callback_data="back")]
-        ])
-        await callback.message.answer(text, reply_markup=keyboard)
-    
-    elif data == "pay_usdt":
-        set_premium(user_id, 30)
-        await callback.message.answer("✅ **Premium активирован!**", reply_markup=main_menu())
-    
-    elif data == "stats":
-        user = get_user(user_id)
-        if user:
-            conn = sqlite3.connect('bot_database.db')
-            cur = conn.cursor()
-            cur.execute('SELECT COUNT(*) FROM history WHERE user_id = ?', (user_id,))
-            total = cur.fetchone()[0]
-            conn.close()
-            
-            text = f"""
-📊 **Статистика**
-
-📝 Запросов: {total}
-🎫 Билетов: {user[2]}
-👥 Приглашено: {user[8]}
-"""
-            await callback.message.answer(text, reply_markup=main_menu())
-    
-    elif data == "help":
-        await help_command(callback.message)
-    
-    elif data == "back":
-        await callback.message.answer("🔙 Главное меню:", reply_markup=main_menu())
-    
-    await callback.answer()
-
-# --- ОБРАБОТЧИК СООБЩЕНИЙ (AI) ---
-@dp.message(Form.waiting_for_question)
-async def handle_ai_question(message: Message, state: FSMContext):
-    user_id = message.from_user.id
-    question = message.text
-    
-    if not question or len(question.strip()) < 2:
-        await message.answer("❌ Напишите вопрос (минимум 2 символа).")
-        return
-    
-    data = await state.get_data()
-    ask_type = data.get("ask_type", "ticket")
-    
-    user = get_user(user_id)
-    is_premium = check_premium(user_id)
-    
-    if not is_premium and ask_type == "ticket":
-        tickets = user[2]
-        if tickets <= 0:
-            await message.answer("❌ **У вас закончились билеты!**", reply_markup=main_menu())
-            await state.clear()
-            return
-        update_tickets(user_id, tickets - 1)
-    
-    waiting_msg = await message.answer("⏳ Думаю над ответом...")
-    
+# --- ЗАПУСК БОТА ---
+def run_bot():
     try:
-        answer = await ask_ai(question, user_id)
-        await waiting_msg.delete()
-        await message.answer(answer, reply_markup=main_menu())
+        asyncio.run(dp.start_polling(bot))
     except Exception as e:
-        await waiting_msg.delete()
-        await message.answer(f"❌ Ошибка: {str(e)[:200]}", reply_markup=main_menu())
-    
-    await state.clear()
-
-@dp.message()
-async def unknown_command(message: Message):
-    await message.answer("❌ Неизвестная команда. Используйте /start.", reply_markup=main_menu())
-
-# --- FLASK ЭНДПОИНТЫ ---
-@app.route('/')
-def home():
-    return "🤖 Bot is running!", 200
-
-@app.route('/health')
-def health():
-    try:
-        conn = sqlite3.connect('bot_database.db')
-        cur = conn.cursor()
-        cur.execute('SELECT COUNT(*) FROM users')
-        count = cur.fetchone()[0]
-        conn.close()
-        return jsonify({"status": "ok", "users": count}), 200
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-@app.route('/admin/stats')
-def admin_stats():
-    try:
-        conn = sqlite3.connect('bot_database.db')
-        cur = conn.cursor()
-        cur.execute('SELECT COUNT(*) FROM users')
-        total_users = cur.fetchone()[0]
-        cur.execute('SELECT COUNT(*) FROM users WHERE is_premium = 1')
-        premium_users = cur.fetchone()[0]
-        cur.execute('SELECT SUM(tickets) FROM users')
-        total_tickets = cur.fetchone()[0] or 0
-        cur.execute('SELECT COUNT(*) FROM history')
-        total_requests = cur.fetchone()[0]
-        cur.execute('SELECT SUM(referrals_count) FROM users')
-        total_referrals = cur.fetchone()[0] or 0
-        conn.close()
-        return jsonify({
-            "total_users": total_users,
-            "premium_users": premium_users,
-            "total_tickets": total_tickets,
-            "total_requests": total_requests,
-            "total_referrals": total_referrals,
-            "status": "running"
-        })
-    except Exception as e:
-        return jsonify({"status": "error", "message": str(e)}), 500
-
-# --- ЗАПУСК БОТА ЧЕРЕЗ WEBHOOK (ДЛЯ RENDER) ---
-
-async def on_startup(dispatcher: Dispatcher, bot: Bot):
-    # При запуске говорим Telegram'у, куда слать запросы
-    # Важно: WEBHOOK_URL должен совпадать с вашим адресом на Render
-    WEBHOOK_URL = "https://mybot-hk5p.onrender.com"
-    await bot.set_webhook(WEBHOOK_URL)
-    print(f"✅ Webhook установлен на {WEBHOOK_URL}")
-
-async def on_shutdown(dispatcher: Dispatcher, bot: Bot):
-    # Удаляем вебхук при остановке
-    await bot.delete_webhook()
-    await dispatcher.storage.close()
+        print(f"❌ Ошибка бота: {e}")
 
 if __name__ == "__main__":
-    # Создаем админов (как было у вас)
+    # Создаем админов
     for admin_id in ADMIN_IDS:
         try:
             create_user(admin_id, "Admin")
@@ -540,18 +206,12 @@ if __name__ == "__main__":
         except:
             pass
 
-    print("🚀 Запуск бота через Webhook...")
-
-    # Берем порт из окружения Render (или 10000 по умолчанию)
-    port = int(os.environ.get("PORT", 10000))
+    print("🚀 Запуск бота...")
     
-    # Запускаем aiogram с вебхуком вместо pollng
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path="",
-        on_startup=on_startup,
-        on_shutdown=on_shutdown,
-        skip_updates=True,
-        host="0.0.0.0",
-        port=port,
-                        )
+    # Запускаем бота в отдельном потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем Flask сервер
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
