@@ -1,32 +1,32 @@
 import os
-import threading
 import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask
-from aiogram import Bot, Dispatcher, types, executor
-from aiogram.types import InlineKeyboardMarkup, InlineKeyboardButton
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes
 from openai import OpenAI
 
-# --- ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА ---
-BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
-OPENROUTER_API_KEY = "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"
-ADMIN_IDS = [8915047087]
+# ==========================================
+# 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
+# ==========================================
+BOT_TOKEN = "8428594117:ВАШ_ТОКЕН_БОТА_СЮДА" 
+OPENROUTER_API_KEY = "sk-or-v1-ВАШ_КЛЮЧ_OPENROUTER_СЮДА"
+ADMIN_IDS = [8915047087] 
 REFERRAL_BONUS = 2
 
-if not BOT_TOKEN:
-    raise ValueError("❌ Токен бота не задан!")
-
-# --- ИНИЦИАЛИЗАЦИЯ ---
-bot = Bot(token=BOT_TOKEN)
-dp = Dispatcher(bot)
-app = Flask(__name__)
+# ==========================================
+# 2. ИНИЦИАЛИЗАЦИЯ
+# ==========================================
+app_flask = Flask(__name__) # Переименовали, чтобы не путать с Application
 
 client = OpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
-# --- БАЗА ДАННЫХ ---
+# ==========================================
+# 3. БАЗА ДАННЫХ (Полностью скопирована с прошлого раза)
+# ==========================================
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
@@ -104,29 +104,17 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# --- КЛАВИАТУРЫ ---
-def main_menu():
-    keyboard = InlineKeyboardMarkup(row_width=1)
-    keyboard.add(
-        InlineKeyboardButton("🤖 Задать вопрос AI", callback_data="ask_ai"),
-        InlineKeyboardButton("🎟 Мои билеты", callback_data="my_tickets"),
-        InlineKeyboardButton("👥 Реферальная система", callback_data="referral"),
-        InlineKeyboardButton("💎 Купить Premium", callback_data="buy_premium"),
-        InlineKeyboardButton("📊 Статистика", callback_data="stats"),
-        InlineKeyboardButton("❓ Помощь", callback_data="help")
-    )
-    return keyboard
-
-# --- ОБРАБОТЧИКИ ---
-@dp.message_handler(commands=['start'])
-async def start_command(message: types.Message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "Unknown"
+# ==========================================
+# 4. КЛАВИАТУРЫ И ОБРАБОТЧИКИ (Новый синтаксис)
+# ==========================================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    username = update.effective_user.username or "Unknown"
     
-    args = message.text.split()
+    args = context.args
     referred_by = None
-    if len(args) > 1:
-        code = args[1]
+    if args:
+        code = args[0]
         referrer_id = get_user_by_referral_code(code)
         if referrer_id and referrer_id != user_id:
             referred_by = referrer_id
@@ -140,7 +128,7 @@ async def start_command(message: types.Message):
     is_premium = check_premium(user_id)
     referrals_count = user[8] if user else 0
     
-    bot_user = await bot.get_me()
+    bot_user = await context.bot.get_me()
     bot_username = bot_user.username
     
     welcome_text = f"""
@@ -154,13 +142,38 @@ async def start_command(message: types.Message):
 🔗 **Реферальная ссылка:**
 `https://t.me/{bot_username}?start={user_id}`
 """
-    await message.answer(welcome_text, reply_markup=main_menu())
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 Задать вопрос AI", callback_data="ask_ai")],
+        [InlineKeyboardButton("🎟 Мои билеты", callback_data="my_tickets")],
+        [InlineKeyboardButton("👥 Реферальная система", callback_data="referral")],
+        [InlineKeyboardButton("💎 Купить Premium", callback_data="buy_premium")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton("❓ Помощь", callback_data="help")]
+    ])
+    await update.message.reply_text(welcome_text, reply_markup=keyboard)
 
-@dp.message_handler(commands=['help'])
-async def help_command(message: types.Message):
-    await message.answer("❓ **Помощь**\n\n🤖 AI-помощник — задайте любой вопрос\n🎟 Билеты — за трату при регистрации\n👥 Реферальная система — приглашайте друзей\n💎 Premium — безлимитный AI на 30 дней", reply_markup=main_menu())
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("🤖 Задать вопрос AI", callback_data="ask_ai")],
+        [InlineKeyboardButton("🎟 Мои билеты", callback_data="my_tickets")],
+        [InlineKeyboardButton("👥 Реферальная система", callback_data="referral")],
+        [InlineKeyboardButton("💎 Купить Premium", callback_data="buy_premium")],
+        [InlineKeyboardButton("📊 Статистика", callback_data="stats")],
+        [InlineKeyboardButton("❓ Помощь", callback_data="help")]
+    ])
+    help_text = """
+❓ **Помощь**
 
-# --- ЗАПУСК ---
+🤖 AI-помощник — задайте любой вопрос
+🎟 Билеты — за трату при регистрации
+👥 Реферальная система — приглашайте друзей
+💎 Premium — безлимитный AI на 30 дней
+"""
+    await update.message.reply_text(help_text, reply_markup=keyboard)
+
+# ==========================================
+# 5. ЗАПУСК
+# ==========================================
 if __name__ == "__main__":
     for admin_id in ADMIN_IDS:
         try:
@@ -170,12 +183,18 @@ if __name__ == "__main__":
         except:
             pass
 
-    port = int(os.environ.get("PORT", 10000))
     print("🚀 Запуск бота...")
-    executor.start_webhook(
-        dispatcher=dp,
-        webhook_path='',
-        on_startup=None,
-        host='0.0.0.0',
-        port=port,
-    )
+    
+    # Создаем приложение
+    application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Добавляем команды
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
+    
+    # Запускаем бота (Polling через Flask в фоне)
+    port = int(os.environ.get("PORT", 10000))
+    app_flask.run(host="0.0.0.0", port=port) # Это заглушка для Render
+    
+    # Реальный запуск бота
+    application.run_polling()
