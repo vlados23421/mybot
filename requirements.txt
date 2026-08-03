@@ -1,4 +1,3 @@
 Flask
-openai
+pyTelegramBotAPI
 python-dotenv
-requests
