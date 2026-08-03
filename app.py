@@ -70,13 +70,15 @@ def init_db():
 
 init_db()
 
-def get_user(user_id):
+def get_user_by_referral_code(code):
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    user = cur.fetchone()
+    cur.execute("SELECT user_id FROM users WHERE referral_code = ?", (code,))
+    result = cur.fetchone()
     conn.close()
-    return user
+    if result:
+        return result[0]
+    return None
 
 def create_user(user_id, username, referred_by=None):
     conn = sqlite3.connect('bot_database.db')
