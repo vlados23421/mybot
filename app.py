@@ -191,13 +191,6 @@ async def help_command(message: Message):
 """
     await message.answer(help_text, reply_markup=main_menu())
 
-# --- ЗАПУСК БОТА ---
-def run_bot():
-    try:
-        asyncio.run(dp.start_polling(bot))
-    except Exception as e:
-        print(f"❌ Ошибка бота: {e}")
-
 if __name__ == "__main__":
     # Создаем админов
     for admin_id in ADMIN_IDS:
@@ -208,12 +201,13 @@ if __name__ == "__main__":
         except:
             pass
 
-    print("🚀 Запуск бота...")
+    print("🚀 Запуск бота в режиме POLLING...")
     
-    # Запускаем бота в отдельном потоке
-    bot_thread = threading.Thread(target=run_bot, daemon=True)
-    bot_thread.start()
-    
-    # Запускаем Flask сервер
-    port = int(os.environ.get("PORT", 10000))
-    app.run(host="0.0.0.0", port=port)
+    # ЗАПУСКАЕМ БОТА НАПРЯМУЮ (БЕЗ ПОТОКОВ И БЕЗ FLASK)
+    # Это самый надежный вариант для Render
+    try:
+        asyncio.run(dp.start_polling(bot))
+    except Exception as e:
+        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА БОТА: {e}")
+        import traceback
+        traceback.print_exc()
