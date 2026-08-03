@@ -1,5 +1,6 @@
 import os
 import asyncio
+import threading
 import sqlite3
 from datetime import datetime, timedelta
 from flask import Flask
@@ -9,29 +10,16 @@ from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from openai import OpenAI
 
-# ==========================================
-# 1. КОНФИГУРАЦИЯ (ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА)
-# ==========================================
-# Вставьте сюда токен от BotFather
-BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo" 
-
-# Вставьте сюда ключ от OpenRouter
-OPENROUTER_API_KEY = "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" 
-
-# Ваш Telegram ID (цифры)
+# --- КОНФИГУРАЦИЯ (ВСТАВЬТЕ СЮДА СВОИ КЛЮЧИ) ---
+BOT_TOKEN = "8428594117:ВАШ_ТОКЕН_БОТА_СЮДА" 
+OPENROUTER_API_KEY = "sk-or-v1-ВАШ_КЛЮЧ_OPENROUTER_СЮДА"
 ADMIN_IDS = [8915047087] 
-
 REFERRAL_BONUS = 2
 
 if not BOT_TOKEN:
-    raise ValueError("❌ TELEGRAM_BOT_TOKEN не задан!")
+    raise ValueError("❌ Токен бота не задан!")
 
-print(f"🤖 Bot token загружен.")
-print(f"🔑 OpenRouter key загружен.")
-
-# ==========================================
-# 2. ИНИЦИАЛИЗАЦИЯ БОТА И FLASK
-# ==========================================
+# --- ИНИЦИАЛИЗАЦИЯ ---
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -42,13 +30,10 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# ==========================================
-# 3. БАЗА ДАННЫХ SQLITE
-# ==========================================
+# --- БАЗА ДАННЫХ ---
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
-    
     cur.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
@@ -89,10 +74,8 @@ def get_user_by_referral_code(code):
 def create_user(user_id, username, referred_by=None):
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
-    
     referral_code = f"ref{user_id}"
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    
     cur.execute('''
     INSERT INTO users (user_id, username, created_at, referral_code, referred_by)
     VALUES (?, ?, ?, ?, ?)
@@ -102,7 +85,6 @@ def create_user(user_id, username, referred_by=None):
         cur.execute("UPDATE users SET tickets = tickets + ? WHERE user_id = ?", (REFERRAL_BONUS, user_id))
         cur.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
         conn.commit()
-    
     conn.close()
 
 def check_premium(user_id):
@@ -126,9 +108,7 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# ==========================================
-# 4. КЛАВИАТУРЫ И ОБРАБОТЧИКИ
-# ==========================================
+# --- КЛАВИАТУРЫ ---
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Задать вопрос AI", callback_data="ask_ai")],
@@ -140,6 +120,7 @@ def main_menu():
     ])
     return keyboard
 
+# --- ОБРАБОТЧИКИ КОМАНД ---
 @dp.message(Command("start"))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -191,11 +172,14 @@ async def help_command(message: Message):
 """
     await message.answer(help_text, reply_markup=main_menu())
 
-# ==========================================
-# 5. ЗАПУСК (САМЫЙ ВАЖНЫЙ БЛОК)
-# ==========================================
+# --- ЗАПУСК БОТА ---
+def run_bot():
+    try:
+        asyncio.run(dp.start_polling(bot))
+    except Exception as e:
+        print(f"❌ Ошибка бота: {e}")
+
 if __name__ == "__main__":
-    # Создаем админов при запуске
     for admin_id in ADMIN_IDS:
         try:
             create_user(admin_id, "Admin")
@@ -204,12 +188,12 @@ if __name__ == "__main__":
         except:
             pass
 
-    print("🚀 Запуск бота в режиме POLLING...")
+    print("🚀 Запуск бота...")
     
-    # Простой и надежный запуск
-    try:
-        asyncio.run(dp.start_polling(bot))
-    except Exception as e:
-        print(f"❌ КРИТИЧЕСКАЯ ОШИБКА БОТА: {e}")
-        import traceback
-        traceback.print_exc()
+    # Запускаем бота в фоновом потоке
+    bot_thread = threading.Thread(target=run_bot, daemon=True)
+    bot_thread.start()
+    
+    # ОТКРЫВАЕМ ПОРТ ДЛЯ RENDER (чтобы он не выключил нас)
+    port = int(os.environ.get("PORT", 10000))
+    app.run(host="0.0.0.0", port=port)
