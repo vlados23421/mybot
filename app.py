@@ -1,37 +1,33 @@
 import os
 import sqlite3
-import telebot
-from datetime import datetime, timedelta
-from flask import Flask, request
+import threading
+from datetime import datetime
+from flask import Flask
+from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
-# ===========================
+# ==========================================
 # 1. НАСТРОЙКИ
-# ===========================
+# ==========================================
 BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
 ADMIN_ID = 8915047087
-REFERRAL_BONUS = 2
 
-bot = telebot.TeleBot(BOT_TOKEN)
-app = Flask(__name__)
+# Flask-заглушка
+app_flask = Flask(__name__)
 
-# ===========================
+# ==========================================
 # 2. БАЗА ДАННЫХ
-# ===========================
+# ==========================================
 def init_db():
-    conn = sqlite3.connect('bot_database.db')
+    conn = sqlite3.connect('krmp_users.db')
     cur = conn.cursor()
     cur.execute('''
     CREATE TABLE IF NOT EXISTS users (
         user_id INTEGER PRIMARY KEY,
         username TEXT,
-        tickets INTEGER DEFAULT 3,
-        is_premium BOOLEAN DEFAULT 0,
-        premium_until TEXT,
-        total_requests INTEGER DEFAULT 0,
-        created_at TEXT,
-        referred_by INTEGER DEFAULT NULL,
-        referral_code TEXT UNIQUE,
-        referrals_count INTEGER DEFAULT 0
+        first_name TEXT,
+        last_name TEXT,
+        created_at TEXT
     )
     ''')
     conn.commit()
@@ -39,130 +35,85 @@ def init_db():
 
 init_db()
 
-def get_user(user_id):
-    conn = sqlite3.connect('bot_database.db')
+def register_user(user_id, username, first_name, last_name):
+    conn = sqlite3.connect('krmp_users.db')
     cur = conn.cursor()
-    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
-    user = cur.fetchone()
-    conn.close()
-    return user
-
-def create_user(user_id, username, referred_by=None):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    referral_code = f"ref{user_id}"
-    created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute('''
-    INSERT INTO users (user_id, username, created_at, referral_code, referred_by)
-    VALUES (?, ?, ?, ?, ?)
-    ''', (user_id, username, created_at, referral_code, referred_by))
-    
-    if referred_by and referred_by != user_id:
-        cur.execute("UPDATE users SET tickets = tickets + ? WHERE user_id = ?", (REFERRAL_BONUS, user_id))
-        cur.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
-        conn.commit()
-    conn.close()
-
-def check_premium(user_id):
-    user = get_user(user_id)
-    if not user or not user[5]: return False
     try:
-        return datetime.strptime(user[5], "%Y-%m-%d %H:%M:%S") > datetime.now()
-    except:
-        return False
+        cur.execute("SELECT 1 FROM users WHERE user_id = ?", (user_id,))
+        if not cur.fetchone():
+            cur.execute('''
+            INSERT INTO users (user_id, username, first_name, last_name, created_at)
+            VALUES (?, ?, ?, ?, ?)
+            ''', (user_id, username, first_name, last_name, datetime.now().strftime("%Y-%m-%d %H:%M:%S")))
+            conn.commit()
+    finally:
+        conn.close()
 
-# ===========================
-# 3. КЛАВИАТУРЫ
-# ===========================
+# ==========================================
+# 3. МЕНЮ
+# ==========================================
 def main_menu():
-    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
-    markup.add(
-        telebot.types.InlineKeyboardButton("🤖 Связаться с поддержкой", callback_data="ask_ai"),
-        telebot.types.InlineKeyboardButton("🎟 Мои билеты", callback_data="my_tickets"),
-        telebot.types.InlineKeyboardButton("👥 Реферальная система", callback_data="referral"),
-        telebot.types.InlineKeyboardButton("💎 Купить Premium", callback_data="buy_premium"),
-        telebot.types.InlineKeyboardButton("❓ Помощь", callback_data="help")
-    )
-    return markup
+    keyboard = [
+        [InlineKeyboardButton("📩 Связаться с Администрацией", callback_data="support")],
+        [InlineKeyboardButton("ℹ️ О проекте BEST RUSSIA", callback_data="info")]
+    ]
+    return InlineKeyboardMarkup(keyboard)
 
-# ===========================
+# ==========================================
 # 4. ОБРАБОТЧИКИ
-# ===========================
-@bot.message_handler(commands=['start'])
-def send_welcome(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "Unknown"
-    
-    if not get_user(user_id):
-        create_user(user_id, username)
-    
-    user = get_user(user_id)
-    tickets = user[3] if user else 0
-    is_premium = check_premium(user_id)
-    referrals_count = user[8] if user else 0
-    
+# ==========================================
+async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    register_user(user.id, user.username, user.first_name, user.last_name)
     welcome_text = f"""
-👋 **Добро пожаловать!**
+🎖 **Добро пожаловать в BEST RUSSIA (КРМП)!**
 
-🆔 Ваш ID: `{user_id}`
-🎟 Билетов: `{tickets}`
-💎 Premium: `{"✅ Активен" if is_premium else "❌ Нет"}`
-👥 Приглашено: `{referrals_count}` чел.
+🆔 Ваш ID: `{user.id}`
+👤 Никнейм: @{user.username or 'Отсутствует'}
+
+Это официальный бот для связи с Администрацией.
+Нажмите кнопку ниже, чтобы написать нам.
 """
-    bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
+    await update.message.reply_text(welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
 
-@bot.callback_query_handler(func=lambda call: True)
-def handle_query(call):
-    if call.data == "ask_ai":
-        bot.send_message(call.message.chat.id, "🤖 **Поддержка.** Напишите ваш вопрос, и я перешлю его администратору.")
-    elif call.data == "my_tickets":
-        user = get_user(call.from_user.id)
-        tickets = user[3] if user else 0
-        bot.send_message(call.message.chat.id, f"🎟 **Ваши билеты:** `{tickets}`", parse_mode="Markdown")
-    elif call.data == "referral":
-        bot.send_message(call.message.chat.id, "👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
-    elif call.data == "buy_premium":
-        bot.send_message(call.message.chat.id, "💎 Функция Premium пока в разработке.")
-    elif call.data == "help":
-        bot.send_message(call.message.chat.id, "❓ **Помощь:**\n🤖 Поддержка - задайте вопрос\n🎟 Билеты - ваш баланс\n👥 Рефералы - получайте билеты")
+async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "support":
+        await query.edit_message_text("📩 Напишите ваше сообщение. Администрация BEST RUSSIA прочитает его.")
+    elif query.data == "info":
+        await query.edit_message_text("ℹ️ BEST RUSSIA — развивающийся RP-проект. Все обращения рассматриваются вручную.", reply_markup=main_menu())
 
-@bot.message_handler(func=lambda message: True)
-def forward_to_admin(message):
-    user_id = message.from_user.id
-    username = message.from_user.username or "Unknown"
-    text = message.text
-    
-    user = get_user(user_id)
-    tickets = user[3] if user else 0
-    
-    if tickets <= 0:
-        bot.send_message(user_id, "❌ У вас закончились билеты. Обратитесь к администратору.")
-        return
-
+async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user = update.effective_user
+    text = update.message.text
     forward_msg = f"""
-✉️ **Новое обращение от пользователя**
+✉️ **НОВОЕ ОБРАЩЕНИЕ BEST RUSSIA**
 
-👤 ID: `{user_id}`
-👤 Username: @{username}
-🎟 Билетов: `{tickets}`
+🆔 ID: `{user.id}`
+👤 Ник: @{user.username or 'Отсутствует'}
 
-📝 **Вопрос:**
+📝 **Текст:**
 {text}
 """
-    bot.send_message(ADMIN_ID, forward_msg, parse_mode="Markdown")
-    
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    cur.execute("UPDATE users SET tickets = tickets - 1 WHERE user_id = ?", (user_id,))
-    conn.commit()
-    conn.close()
-    
-    bot.send_message(user_id, "✅ Ваш вопрос отправлен администратору. Ожидайте ответа.")
+    await context.bot.send_message(chat_id=ADMIN_ID, text=forward_msg, parse_mode="Markdown")
+    await update.message.reply_text("✅ Ваше обращение отправлено Администрации!", reply_markup=main_menu())
 
-# ===========================
-# 5. ЗАПУСК (ТОЛЬКО WEBHOOK)
-# ===========================
+# ==========================================
+# 5. ЗАПУСК (С ПОТОКОМ ДЛЯ WEB SERVICE)
+# ==========================================
 if __name__ == "__main__":
+    application = Application.builder().token(BOT_TOKEN).build()
+    application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CallbackQueryHandler(button_click))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin))
+
+    print("🚀 Запуск бота BEST RUSSIA...")
+    
+    # Запускаем бота в фоновом потоке
+    bot_thread = threading.Thread(target=application.run_polling, daemon=True)
+    bot_thread.start()
+    
+    # Запускаем Flask-заглушку для Render
     port = int(os.environ.get("PORT", 10000))
-    print(f"🚀 Запуск Webhook на порту {port}...")
-    app.run(host="0.0.0.0", port=port)
+    app_flask.run(host="0.0.0.0", port=port)
