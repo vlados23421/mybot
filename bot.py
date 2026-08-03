@@ -103,10 +103,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⏳ Эта функция находится в разработке! Скоро она заработает.")
 
 # ==========================================
-# ЗАПУСК БОТА
+# ЗАПУСК БОТА И ВЕБ-СЕРВЕРА (для Render)
 # ==========================================
+import aiohttp
+from aiohttp import web
+
+async def handle_health(request):
+    return web.Response(text="OK")
 
 async def main():
+    # Создаем приложение бота
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
@@ -114,10 +120,22 @@ async def main():
 
     print("🚀 PSR BOT запущен! Всё готово к работе.")
     
+    # Запускаем бота
     await application.initialize()
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
-    
+
+    # Запускаем маленький веб-сервер на порту 10000 (чтобы Render не убивал бота)
+    app = web.Application()
+    app.router.add_get('/health', handle_health)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.getenv("PORT", 10000))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port}")
+
+    # Держим бота активным
     try:
         await asyncio.Event().wait()
     finally:
