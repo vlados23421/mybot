@@ -9,8 +9,8 @@ from openai import OpenAI
 # ==========================================
 # 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
 # ==========================================
-BOT_TOKEN = "8428594117:ВАШ_ТОКЕН_БОТА_СЮДА" 
-OPENROUTER_API_KEY = "sk-or-v1-ВАШ_КЛЮЧ_OPENROUTER_СЮДА"
+BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo" 
+OPENROUTER_API_KEY = "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"
 ADMIN_IDS = [8915047087] 
 REFERRAL_BONUS = 2
 
