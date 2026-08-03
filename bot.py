@@ -1488,7 +1488,13 @@ def main():
     print(f"📁 Файл данных: {db.filename}")
     print(f"🔄 Энергия восстанавливается: {ENERGY_RESTORE_RATE} единиц/минуту")
     
-    application.run_polling(allowed_updates=Update.ALL_TYPES)
-
-if __name__ == '__main__':
-    main()
+    if __name__ == '__main__':
+    import asyncio
+    
+    # Создаем новый event loop и устанавливаем его как текущий
+    loop = asyncio.new_event_loop()
+    asyncio.set_event_loop(loop)
+    
+    # Запускаем бота с этим циклом
+    main()  # <--- ВОТ ЗДЕСЬ (внутри if __name__)
+    
