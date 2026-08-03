@@ -86,15 +86,8 @@ def main_menu():
     return markup
 
 # ===========================
-# 4. WEBHOOK ОБРАБОТЧИК
+# 4. ОБРАБОТЧИКИ
 # ===========================
-@app.route("/", methods=["POST"])
-def webhook():
-    json_string = request.get_data().decode('utf-8')
-    update = telebot.types.Update.de_json(json_string)
-    bot.process_new_updates([update])
-    return "OK", 200
-
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
@@ -167,7 +160,7 @@ def forward_to_admin(message):
     bot.send_message(user_id, "✅ Ваш вопрос отправлен администратору. Ожидайте ответа.")
 
 # ===========================
-# 5. ЗАПУСК
+# 5. ЗАПУСК (ТОЛЬКО WEBHOOK)
 # ===========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
