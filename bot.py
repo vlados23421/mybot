@@ -1468,33 +1468,43 @@ async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # === ЗАПУСК ===
 
-def main():
-    """Запуск бота"""
+async def main():  # <--- ОБЯЗАТЕЛЬНО добавьте async здесь
+    """Запуск Бота"""
     application = Application.builder().token(TOKEN).build()
-    
+
     # Команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("help", help_command))
-    
+
     # Кнопки
     application.add_handler(CallbackQueryHandler(button_handler))
-    
+
     # Текст
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_text))
-    
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     # Запуск
-    print("🎮 Игровой бот BEST RUSSIA запущен!")
+    print("🚀 Игровой бот BEST RUSSIA запущен!")
     print(f"👑 Администраторы: {ADMIN_IDS}")
     print(f"📁 Файл данных: {db.filename}")
-    print(f"🔄 Энергия восстанавливается: {ENERGY_RESTORE_RATE} единиц/минуту")
+    print(f"⚡ Энергия восстанавливается: {ENERGY_RESTORE_RATE} единиц/минуту")
+
+    # Инициализация и запуск
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
     
-    if __name__ == '__main__':
+    # Держим бота активным
+    try:
+        await asyncio.Event().wait()
+    finally:
+        await application.updater.stop()
+        await application.stop()
+        await application.shutdown()
+
+if __name__ == '__main__':
     import asyncio
-    
-    # Создаем новый event loop и устанавливаем его как текущий
-    loop = asyncio.new_event_loop()
-    asyncio.set_event_loop(loop)
-    
-    # Запускаем бота с этим циклом
-    main()  # <--- ВОТ ЗДЕСЬ (внутри if __name__)
-    
+    try:
+        # Запускаем асинхронную main() через asyncio.run() - это правильно и безопасно
+        asyncio.run(main())
+    except KeyboardInterrupt:
+        print("Бот остановлен.")
