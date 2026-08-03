@@ -2,20 +2,16 @@ import os
 import sqlite3
 import telebot
 from datetime import datetime, timedelta
-from flask import Flask
-from threading import Thread  # <--- ВОТ ЭТА СТРОКА БЫЛА ПРОПУЩЕНА В ПРОШЛЫЙ РАЗ
+import time
 
 # ===========================
-# 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
+# 1. НАСТРОЙКИ
 # ===========================
 BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
-ADMIN_ID = 8915047087  # Ваш Telegram ID
+ADMIN_ID = 8915047087
 REFERRAL_BONUS = 2
 
 bot = telebot.TeleBot(BOT_TOKEN)
-
-# Flask - заглушка для порта Render
-app = Flask(__name__)
 
 # ===========================
 # 2. БАЗА ДАННЫХ
@@ -74,16 +70,8 @@ def check_premium(user_id):
     except:
         return False
 
-def set_premium(user_id, days):
-    conn = sqlite3.connect('bot_database.db')
-    cur = conn.cursor()
-    premium_until = (datetime.now() + timedelta(days=days)).strftime("%Y-%m-%d %H:%M:%S")
-    cur.execute("UPDATE users SET is_premium = 1, premium_until = ? WHERE user_id = ?", (premium_until, user_id))
-    conn.commit()
-    conn.close()
-
 # ===========================
-# 3. КЛАВИАТУРЫ
+# 3. КЛАВИАТУРЫ И КОМАНДЫ
 # ===========================
 def main_menu():
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -96,23 +84,13 @@ def main_menu():
     )
     return markup
 
-# ===========================
-# 4. ОБРАБОТЧИКИ КОМАНД
-# ===========================
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
     user_id = message.from_user.id
     username = message.from_user.username or "Unknown"
     
-    args = message.text.split()
-    referred_by = None
-    if len(args) > 1:
-        code = args[1]
-        if code.isdigit() and int(code) != user_id:
-            referred_by = int(code)
-
     if not get_user(user_id):
-        create_user(user_id, username, referred_by)
+        create_user(user_id, username)
     
     user = get_user(user_id)
     tickets = user[3] if user else 0
@@ -129,12 +107,8 @@ def send_welcome(message):
 """
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
 
-@bot.message_handler(commands=['help'])
-def send_help(message):
-    bot.send_message(message.chat.id, "❓ **Помощь:**\n🤖 Поддержка - задайте вопрос\n🎟 Билеты - ваш баланс\n👥 Рефералы - получайте билеты", reply_markup=main_menu())
-
 # ===========================
-# 5. ОБРАБОТЧИКИ КНОПОК
+# 4. ОБРАБОТКА НАЖАТИЙ НА КНОПКИ (ЭТО МЫ ВОССТАНОВИЛИ!)
 # ===========================
 @bot.callback_query_handler(func=lambda call: True)
 def handle_query(call):
@@ -147,7 +121,7 @@ def handle_query(call):
         bot.send_message(call.message.chat.id, f"🎟 **Ваши билеты:** `{tickets}`", parse_mode="Markdown")
         
     elif call.data == "referral":
-        bot.send_message(call.message.chat.id, f"👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
+        bot.send_message(call.message.chat.id, "👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
         
     elif call.data == "buy_premium":
         bot.send_message(call.message.chat.id, "💎 Функция Premium пока в разработке.")
@@ -156,7 +130,7 @@ def handle_query(call):
         bot.send_message(call.message.chat.id, "❓ **Помощь:**\n🤖 Поддержка - задайте вопрос\n🎟 Билеты - ваш баланс\n👥 Рефералы - получайте билеты")
 
 # ===========================
-# 6. ОБРАБОТЧИК ТЕКСТА (Пересылка админу)
+# 5. ОБРАБОТКА ОБЫЧНОГО ТЕКСТА
 # ===========================
 @bot.message_handler(func=lambda message: True)
 def forward_to_admin(message):
@@ -183,7 +157,6 @@ def forward_to_admin(message):
 """
     bot.send_message(ADMIN_ID, forward_msg, parse_mode="Markdown")
     
-    # Списание билета
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
     cur.execute("UPDATE users SET tickets = tickets - 1 WHERE user_id = ?", (user_id,))
@@ -193,14 +166,11 @@ def forward_to_admin(message):
     bot.send_message(user_id, "✅ Ваш вопрос отправлен администратору. Ожидайте ответа.")
 
 # ===========================
-# 7. ЗАПУСК
+# 6. ЗАПУСК БОТА
 # ===========================
 if __name__ == "__main__":
-    port = int(os.environ.get("PORT", 10000))
-    
-    # Запускаем бота в отдельном потоке
-    print("🚀 Запуск бота на telebot...")
-    Thread(target=bot.infinity_polling, daemon=True).start()
-    
-    # Держим порт открытым для Render
-    app.run(host="0.0.0.0", port=port)
+    print("🚀 Запуск бота...")
+    try:
+        bot.infinity_polling(timeout=10)
+    except Exception as e:
+        print(f"❌ Критическая ошибка: {e}")
