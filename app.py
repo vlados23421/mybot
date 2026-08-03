@@ -2,7 +2,7 @@ import os
 import sqlite3
 import telebot
 from datetime import datetime, timedelta
-import time
+from flask import Flask, request
 
 # ===========================
 # 1. НАСТРОЙКИ
@@ -12,6 +12,7 @@ ADMIN_ID = 8915047087
 REFERRAL_BONUS = 2
 
 bot = telebot.TeleBot(BOT_TOKEN)
+app = Flask(__name__)
 
 # ===========================
 # 2. БАЗА ДАННЫХ
@@ -71,7 +72,7 @@ def check_premium(user_id):
         return False
 
 # ===========================
-# 3. КЛАВИАТУРЫ И КОМАНДЫ
+# 3. КЛАВИАТУРЫ
 # ===========================
 def main_menu():
     markup = telebot.types.InlineKeyboardMarkup(row_width=1)
@@ -83,6 +84,16 @@ def main_menu():
         telebot.types.InlineKeyboardButton("❓ Помощь", callback_data="help")
     )
     return markup
+
+# ===========================
+# 4. WEBHOOK ОБРАБОТЧИК
+# ===========================
+@app.route("/", methods=["POST"])
+def webhook():
+    json_string = request.get_data().decode('utf-8')
+    update = telebot.types.Update.de_json(json_string)
+    bot.process_new_updates([update])
+    return "OK", 200
 
 @bot.message_handler(commands=['start'])
 def send_welcome(message):
@@ -107,31 +118,21 @@ def send_welcome(message):
 """
     bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
 
-# ===========================
-# 4. ОБРАБОТКА НАЖАТИЙ НА КНОПКИ (ЭТО МЫ ВОССТАНОВИЛИ!)
-# ===========================
 @bot.callback_query_handler(func=lambda call: True)
 def handle_query(call):
     if call.data == "ask_ai":
         bot.send_message(call.message.chat.id, "🤖 **Поддержка.** Напишите ваш вопрос, и я перешлю его администратору.")
-    
     elif call.data == "my_tickets":
         user = get_user(call.from_user.id)
         tickets = user[3] if user else 0
         bot.send_message(call.message.chat.id, f"🎟 **Ваши билеты:** `{tickets}`", parse_mode="Markdown")
-        
     elif call.data == "referral":
         bot.send_message(call.message.chat.id, "👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
-        
     elif call.data == "buy_premium":
         bot.send_message(call.message.chat.id, "💎 Функция Premium пока в разработке.")
-        
     elif call.data == "help":
         bot.send_message(call.message.chat.id, "❓ **Помощь:**\n🤖 Поддержка - задайте вопрос\n🎟 Билеты - ваш баланс\n👥 Рефералы - получайте билеты")
 
-# ===========================
-# 5. ОБРАБОТКА ОБЫЧНОГО ТЕКСТА
-# ===========================
 @bot.message_handler(func=lambda message: True)
 def forward_to_admin(message):
     user_id = message.from_user.id
@@ -166,11 +167,9 @@ def forward_to_admin(message):
     bot.send_message(user_id, "✅ Ваш вопрос отправлен администратору. Ожидайте ответа.")
 
 # ===========================
-# 6. ЗАПУСК БОТА
+# 5. ЗАПУСК
 # ===========================
 if __name__ == "__main__":
-    print("🚀 Запуск бота...")
-    try:
-        bot.infinity_polling(timeout=10)
-    except Exception as e:
-        print(f"❌ Критическая ошибка: {e}")
+    port = int(os.environ.get("PORT", 10000))
+    print(f"🚀 Запуск Webhook на порту {port}...")
+    app.run(host="0.0.0.0", port=port)
