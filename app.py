@@ -1,42 +1,50 @@
 import os
 import asyncio
-import threading
 import sqlite3
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
+from flask import Flask
 from aiogram import Bot, Dispatcher, types
 from aiogram.types import Message, InlineKeyboardMarkup, InlineKeyboardButton
 from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
-from aiogram.fsm.context import FSMContext
-from aiogram.fsm.state import State, StatesGroup
 from openai import OpenAI
 
-# --- КОНФИГУРАЦИЯ ---
-BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
-OPENROUTER_API_KEY = "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"
-ADMIN_IDS = [8915047087]  # ЗАМЕНИТЕ НА ВАШ ID
+# ==========================================
+# 1. КОНФИГУРАЦИЯ (ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА)
+# ==========================================
+# Вставьте сюда токен от BotFather
+BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo" 
+
+# Вставьте сюда ключ от OpenRouter
+OPENROUTER_API_KEY = "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" 
+
+# Ваш Telegram ID (цифры)
+ADMIN_IDS = [8915047087] 
+
 REFERRAL_BONUS = 2
 
 if not BOT_TOKEN:
     raise ValueError("❌ TELEGRAM_BOT_TOKEN не задан!")
 
-print(f"🤖 Bot token: {BOT_TOKEN[:10]}...")
-print(f"🔑 OpenRouter key: {OPENROUTER_API_KEY[:10]}...")
+print(f"🤖 Bot token загружен.")
+print(f"🔑 OpenRouter key загружен.")
 
-# --- ИНИЦИАЛИЗАЦИЯ ---
+# ==========================================
+# 2. ИНИЦИАЛИЗАЦИЯ БОТА И FLASK
+# ==========================================
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
 app = Flask(__name__)
 
-# --- OpenAI клиент для OpenRouter ---
 client = OpenAI(
     api_key=OPENROUTER_API_KEY,
     base_url="https://openrouter.ai/api/v1"
 )
 
-# --- БАЗА ДАННЫХ SQLITE ---
+# ==========================================
+# 3. БАЗА ДАННЫХ SQLITE
+# ==========================================
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
@@ -55,20 +63,18 @@ def init_db():
         referrals_count INTEGER DEFAULT 0
     )
     ''')
-
-    cur.execute('''
-    CREATE TABLE IF NOT EXISTS history (
-        id INTEGER PRIMARY KEY AUTOINCREMENT,
-        user_id INTEGER,
-        question TEXT,
-        answer TEXT,
-        timestamp TEXT
-    )
-    ''')
     conn.commit()
     conn.close()
 
 init_db()
+
+def get_user(user_id):
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    cur.execute("SELECT * FROM users WHERE user_id = ?", (user_id,))
+    user = cur.fetchone()
+    conn.close()
+    return user
 
 def get_user_by_referral_code(code):
     conn = sqlite3.connect('bot_database.db')
@@ -84,10 +90,7 @@ def create_user(user_id, username, referred_by=None):
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
     
-    # Генерация реферального кода
     referral_code = f"ref{user_id}"
-    
-    # Время создания
     created_at = datetime.now().strftime("%Y-%m-%d %H:%M:%S")
     
     cur.execute('''
@@ -95,9 +98,7 @@ def create_user(user_id, username, referred_by=None):
     VALUES (?, ?, ?, ?, ?)
     ''', (user_id, username, created_at, referral_code, referred_by))
     
-    # Если пользователь пришел по реферальной ссылке, даем бонусы
     if referred_by and referred_by != user_id:
-        # Создаем бонус в историю (упрощенно)
         cur.execute("UPDATE users SET tickets = tickets + ? WHERE user_id = ?", (REFERRAL_BONUS, user_id))
         cur.execute("UPDATE users SET referrals_count = referrals_count + 1 WHERE user_id = ?", (referred_by,))
         conn.commit()
@@ -108,11 +109,13 @@ def check_premium(user_id):
     user = get_user(user_id)
     if not user:
         return False
-    # Индекс 5 - premium_until в таблице
     if user[5]:
-        premium_until = datetime.strptime(user[5], "%Y-%m-%d %H:%M:%S")
-        if premium_until > datetime.now():
-            return True
+        try:
+            premium_until = datetime.strptime(user[5], "%Y-%m-%d %H:%M:%S")
+            if premium_until > datetime.now():
+                return True
+        except:
+            return False
     return False
 
 def set_premium(user_id, days):
@@ -123,7 +126,9 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# --- КЛАВИАТУРЫ ---
+# ==========================================
+# 4. КЛАВИАТУРЫ И ОБРАБОТЧИКИ
+# ==========================================
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Задать вопрос AI", callback_data="ask_ai")],
@@ -135,7 +140,6 @@ def main_menu():
     ])
     return keyboard
 
-# --- ОБРАБОТЧИКИ КОМАНД ---
 @dp.message(Command("start"))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -152,11 +156,7 @@ async def start_command(message: Message):
     user = get_user(user_id)
     if not user:
         create_user(user_id, username, referred_by)
-    else:
-        # Если пользователь уже есть, но пришел по ссылке повторно, обновляем инфо
-        pass
-
-    # Обновляем данные пользователя
+    
     user = get_user(user_id)
     tickets = user[3] if user else 0
     is_premium = check_premium(user_id)
@@ -191,8 +191,11 @@ async def help_command(message: Message):
 """
     await message.answer(help_text, reply_markup=main_menu())
 
+# ==========================================
+# 5. ЗАПУСК (САМЫЙ ВАЖНЫЙ БЛОК)
+# ==========================================
 if __name__ == "__main__":
-    # Создаем админов
+    # Создаем админов при запуске
     for admin_id in ADMIN_IDS:
         try:
             create_user(admin_id, "Admin")
@@ -203,8 +206,7 @@ if __name__ == "__main__":
 
     print("🚀 Запуск бота в режиме POLLING...")
     
-    # ЗАПУСКАЕМ БОТА НАПРЯМУЮ (БЕЗ ПОТОКОВ И БЕЗ FLASK)
-    # Это самый надежный вариант для Render
+    # Простой и надежный запуск
     try:
         asyncio.run(dp.start_polling(bot))
     except Exception as e:
