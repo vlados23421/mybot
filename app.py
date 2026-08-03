@@ -1,29 +1,24 @@
 import os
 import sqlite3
-import requests
+import telebot
 from datetime import datetime, timedelta
-from flask import Flask, request, jsonify
-from openai import OpenAI
+from flask import Flask
 
-# ==========================================
+# ===========================
 # 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
-# ==========================================
+# ===========================
 BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
-OPENROUTER_API_KEY = "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"
-ADMIN_IDS = [8915047087]
+ADMIN_ID = 8915047087  # Ваш Telegram ID
 REFERRAL_BONUS = 2
 
-TELEGRAM_API_URL = f"https://api.telegram.org/bot{BOT_TOKEN}"
+bot = telebot.TeleBot(BOT_TOKEN)
 
+# Flask нужен только для того, чтобы Render не усыпил бота (заглушка)
 app = Flask(__name__)
-client = OpenAI(
-    api_key=OPENROUTER_API_KEY,
-    base_url="https://openrouter.ai/api/v1"
-)
 
-# ==========================================
+# ===========================
 # 2. БАЗА ДАННЫХ
-# ==========================================
+# ===========================
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
@@ -86,81 +81,46 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# ==========================================
-# 3. ФУНКЦИЯ ОТПРАВКИ СООБЩЕНИЙ
-# ==========================================
-def send_message(chat_id, text, keyboard=None):
-    data = {
-        "chat_id": chat_id,
-        "text": text,
-        "parse_mode": "Markdown"
-    }
-    if keyboard:
-        data["reply_markup"] = keyboard
-    requests.post(f"{TELEGRAM_API_URL}/sendMessage", json=data)
+# ===========================
+# 3. КЛАВИАТУРЫ
+# ===========================
+def main_menu():
+    markup = telebot.types.InlineKeyboardMarkup(row_width=1)
+    markup.add(
+        telebot.types.InlineKeyboardButton("🤖 Связаться с поддержкой", callback_data="ask_ai"),
+        telebot.types.InlineKeyboardButton("🎟 Мои билеты", callback_data="my_tickets"),
+        telebot.types.InlineKeyboardButton("👥 Реферальная система", callback_data="referral"),
+        telebot.types.InlineKeyboardButton("💎 Купить Premium", callback_data="buy_premium"),
+        telebot.types.InlineKeyboardButton("❓ Помощь", callback_data="help")
+    )
+    return markup
 
-# ==========================================
-# 4. ГЛАВНЫЙ ОБРАБОТЧИК (WEBHOOK)
-# ==========================================
-@app.route("/", methods=["POST"])
-def webhook():
-    data = request.get_json()
+# ===========================
+# 4. ОБРАБОТЧИКИ КОМАНД
+# ===========================
+@bot.message_handler(commands=['start'])
+def send_welcome(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Unknown"
     
-    # --- Если это нажатие на кнопку (Callback) ---
-    if "callback_query" in data:
-        callback = data["callback_query"]
-        chat_id = callback["message"]["chat"]["id"]
-        callback_data = callback["data"]
-        
-        # Подтверждаем, что кнопка нажата
-        requests.post(f"{TELEGRAM_API_URL}/answerCallbackQuery", json={"callback_query_id": callback["id"]})
-        
-        # --- ЛОГИКА КНОПОК ---
-        if callback_data == "ask_ai":
-            send_message(chat_id, "🤖 Напишите ваш вопрос. Я отвечу с помощью AI.")
-        elif callback_data == "my_tickets":
-            user = get_user(chat_id)
-            tickets = user[3] if user else 0
-            send_message(chat_id, f"🎟 **Ваши билеты:** `{tickets}`")
-        elif callback_data == "referral":
-            send_message(chat_id, "👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
-        elif callback_data == "buy_premium":
-            send_message(chat_id, "💎 Функция Premium пока в разработке.")
-        elif callback_data == "help":
-            send_message(chat_id, "❓ **Помощь:**\n🤖 AI - задайте вопрос\n🎟 Билеты - для запросов\n👥 Рефералы - получайте билеты")
-        return "OK", 200
-
-    # --- Если это обычное текстовое сообщение ---
-    if "message" not in data:
-        return "OK", 200
-    
-    msg = data["message"]
-    chat_id = msg["chat"]["id"]
-    text = msg.get("text", "")
-    user_id = msg["from"]["id"]
-    username = msg["from"].get("username", "Unknown")
+    # Проверяем реферала
+    args = message.text.split()
+    referred_by = None
+    if len(args) > 1:
+        code = args[1]
+        # Проверка кода (упрощенно)
+        if code.isdigit() and int(code) != user_id:
+            referred_by = int(code)
 
     if not get_user(user_id):
-        create_user(user_id, username)
-
-    # === Команда /start ===
-    if text.startswith("/start"):
-        user = get_user(user_id)
-        tickets = user[3] if user else 0
-        is_premium = check_premium(user_id)
-        referrals_count = user[8] if user else 0
-        
-        keyboard = {
-            "inline_keyboard": [
-                [{"text": "🤖 Задать вопрос AI", "callback_data": "ask_ai"}],
-                [{"text": "🎟 Мои билеты", "callback_data": "my_tickets"}],
-                [{"text": "👥 Реферальная система", "callback_data": "referral"}],
-                [{"text": "💎 Купить Premium", "callback_data": "buy_premium"}],
-                [{"text": "❓ Помощь", "callback_data": "help"}]
-            ]
-        }
-        
-        welcome_text = f"""
+        create_user(user_id, username, referred_by)
+    
+    user = get_user(user_id)
+    tickets = user[3] if user else 0
+    is_premium = check_premium(user_id)
+    referrals_count = user[8] if user else 0
+    
+    welcome_text = f"""
 👋 **Добро пожаловать!**
 
 🆔 Ваш ID: `{user_id}`
@@ -168,54 +128,78 @@ def webhook():
 💎 Premium: `{"✅ Активен" if is_premium else "❌ Нет"}`
 👥 Приглашено: `{referrals_count}` чел.
 """
-        send_message(chat_id, welcome_text, keyboard)
+    bot.send_message(message.chat.id, welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
+
+@bot.message_handler(commands=['help'])
+def send_help(message):
+    bot.send_message(message.chat.id, "❓ **Помощь:**\n🤖 Поддержка - задайте вопрос\n🎟 Билеты - ваш баланс\n👥 Рефералы - получайте билеты", reply_markup=main_menu())
+
+# ===========================
+# 5. ОБРАБОТЧИКИ КНОПОК
+# ===========================
+@bot.callback_query_handler(func=lambda call: True)
+def handle_query(call):
+    if call.data == "ask_ai":
+        bot.send_message(call.message.chat.id, "🤖 **Поддержка.** Напишите ваш вопрос, и я перешлю его администратору.")
     
-    # === Команда /help ===
-    elif text.startswith("/help"):
-        send_message(chat_id, "❓ **Помощь:**\n🤖 AI - задайте вопрос\n🎟 Билеты - для запросов\n👥 Рефералы - получайте билеты")
-
-    # === Обычный текст (ответ AI) ===
-    elif text:
-        user = get_user(user_id)
-        if not user:
-            create_user(user_id, username)
-            user = get_user(user_id)
-
+    elif call.data == "my_tickets":
+        user = get_user(call.from_user.id)
         tickets = user[3] if user else 0
-        is_premium = check_premium(user_id)
+        bot.send_message(call.message.chat.id, f"🎟 **Ваши билеты:** `{tickets}`", parse_mode="Markdown")
+        
+    elif call.data == "referral":
+        bot.send_message(call.message.chat.id, f"👥 Приглашайте друзей по вашей ссылке, чтобы получать билеты!")
+        
+    elif call.data == "buy_premium":
+        bot.send_message(call.message.chat.id, "💎 Функция Premium пока в разработке.")
+        
+    elif call.data == "help":
+        bot.send_message(call.message.chat.id, "❓ **Помощь:**\n🤖 Поддержка - задайте вопрос\n🎟 Билеты - ваш баланс\n👥 Рефералы - получайте билеты")
 
-        if tickets <= 0 and not is_premium:
-            send_message(chat_id, "❌ У вас закончились билеты. Пополните баланс у администратора.")
-            return "OK", 200
+# ===========================
+# 6. ОБРАБОТЧИК ТЕКСТА (Пересылка админу)
+# ===========================
+@bot.message_handler(func=lambda message: True)
+def forward_to_admin(message):
+    user_id = message.from_user.id
+    username = message.from_user.username or "Unknown"
+    text = message.text
+    
+    user = get_user(user_id)
+    tickets = user[3] if user else 0
+    
+    if tickets <= 0:
+        bot.send_message(user_id, "❌ У вас закончились билеты. Обратитесь к администратору.")
+        return
 
-        # Показываем статус
-        send_message(chat_id, "⏳ Думаю над ответом...")
+    # Пересылаем админу
+    forward_msg = f"""
+✉️ **Новое обращение от пользователя**
 
-        try:
-            response = client.chat.completions.create(
-                model="gryphe/mythomax-l2-13b",
-                messages=[{"role": "user", "content": text}]
-            )
-            answer = response.choices[0].message.content
-            send_message(chat_id, f"🤖 **Ответ AI:**\n\n{answer}")
-            
-            # Списание билета
-            if not is_premium:
-                conn = sqlite3.connect('bot_database.db')
-                cur = conn.cursor()
-                cur.execute("UPDATE users SET tickets = tickets - 1 WHERE user_id = ?", (user_id,))
-                conn.commit()
-                conn.close()
-                
-        except Exception as e:
-            send_message(chat_id, f"❌ Ошибка AI: {str(e)}")
+👤 ID: `{user_id}`
+👤 Username: @{username}
+🎟 Билетов: `{tickets}`
 
-    return "OK", 200
+📝 **Вопрос:**
+{text}
+"""
+    bot.send_message(ADMIN_ID, forward_msg, parse_mode="Markdown")
+    
+    # Списание билета
+    conn = sqlite3.connect('bot_database.db')
+    cur = conn.cursor()
+    cur.execute("UPDATE users SET tickets = tickets - 1 WHERE user_id = ?", (user_id,))
+    conn.commit()
+    conn.close()
+    
+    bot.send_message(user_id, "✅ Ваш вопрос отправлен администратору. Ожидайте ответа.")
 
-# ==========================================
-# 5. ЗАПУСК СЕРВЕРА
-# ==========================================
+# ===========================
+# 7. ЗАПУСК
+# ===========================
 if __name__ == "__main__":
     port = int(os.environ.get("PORT", 10000))
-    print("🚀 Бот успешно запущен!")
+    # Запускаем Flask для удержания порта, а бот крутится в фоне
+    from threading import Thread
+    Thread(target=bot.infinity_polling, daemon=True).start()
     app.run(host="0.0.0.0", port=port)
