@@ -10,16 +10,17 @@ from aiogram.filters import Command
 from aiogram.fsm.storage.memory import MemoryStorage
 from openai import OpenAI
 
-# --- КОНФИГУРАЦИЯ (ВСТАВЬТЕ СЮДА СВОИ КЛЮЧИ) ---
+# ==========================================
+# 1. ВСТАВЬТЕ СВОИ КЛЮЧИ СЮДА
+# ==========================================
 BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo" 
 OPENROUTER_API_KEY = "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"
 ADMIN_IDS = [8915047087] 
 REFERRAL_BONUS = 2
 
-if not BOT_TOKEN:
-    raise ValueError("❌ Токен бота не задан!")
-
-# --- ИНИЦИАЛИЗАЦИЯ ---
+# ==========================================
+# 2. ИНИЦИАЛИЗАЦИЯ
+# ==========================================
 bot = Bot(token=BOT_TOKEN)
 storage = MemoryStorage()
 dp = Dispatcher(storage=storage)
@@ -30,7 +31,9 @@ client = OpenAI(
     base_url="https://openrouter.ai/api/v1"
 )
 
-# --- БАЗА ДАННЫХ ---
+# ==========================================
+# 3. БАЗА ДАННЫХ
+# ==========================================
 def init_db():
     conn = sqlite3.connect('bot_database.db')
     cur = conn.cursor()
@@ -108,7 +111,9 @@ def set_premium(user_id, days):
     conn.commit()
     conn.close()
 
-# --- КЛАВИАТУРЫ ---
+# ==========================================
+# 4. КЛАВИАТУРЫ И ОБРАБОТЧИКИ
+# ==========================================
 def main_menu():
     keyboard = InlineKeyboardMarkup(inline_keyboard=[
         [InlineKeyboardButton(text="🤖 Задать вопрос AI", callback_data="ask_ai")],
@@ -120,7 +125,6 @@ def main_menu():
     ])
     return keyboard
 
-# --- ОБРАБОТЧИКИ КОМАНД ---
 @dp.message(Command("start"))
 async def start_command(message: Message):
     user_id = message.from_user.id
@@ -172,7 +176,9 @@ async def help_command(message: Message):
 """
     await message.answer(help_text, reply_markup=main_menu())
 
-# --- ЗАПУСК БОТА ---
+# ==========================================
+# 5. ЗАПУСК С ПОРТОМ (ДЛЯ БЕСПЛАТНОГО RENDER)
+# ==========================================
 def run_bot():
     try:
         asyncio.run(dp.start_polling(bot))
@@ -194,6 +200,6 @@ if __name__ == "__main__":
     bot_thread = threading.Thread(target=run_bot, daemon=True)
     bot_thread.start()
     
-    # ОТКРЫВАЕМ ПОРТ ДЛЯ RENDER (чтобы он не выключил нас)
+    # ОТКРЫВАЕМ ПОРТ 10000, ЧТОБЫ RENDER НЕ УБИЛ НАС
     port = int(os.environ.get("PORT", 10000))
     app.run(host="0.0.0.0", port=port)
