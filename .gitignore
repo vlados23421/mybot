@@ -1,0 +1,99 @@
+# ===== СЕКРЕТЫ (САМОЕ ВАЖНОЕ!) =====
+.env
+.env.local
+.env.*.local
+*.pem
+*.key
+*.crt
+secrets/
+secret/
+
+# ===== ДАННЫЕ ИГРЫ =====
+*.db
+*.sqlite
+*.sqlite3
+game_data.json
+crm_data.json
+best_russia_game.json
+*.json.bak
+
+# ===== PYTHON =====
+*.pyc
+*.pyo
+*.pyd
+__pycache__/
+*.so
+*.egg
+*.egg-info/
+dist/
+build/
+
+# ===== ЛОГИ =====
+*.log
+logs/
+*.log.*
+error_logs/
+
+# ===== IDE =====
+.vscode/
+.idea/
+*.swp
+*.swo
+*~
+.DS_Store
+Thumbs.db
+*.iml
+.workspace
+.metadata
+
+# ===== ВИРТУАЛЬНЫЕ ОКРУЖЕНИЯ =====
+venv/
+env/
+ENV/
+env.bak/
+venv.bak/
+pythonenv*
+.venv/
+virtualenv/
+
+# ===== GIT =====
+.git/
+.gitignore
+.gitattributes
+
+# ===== DOCKER =====
+.dockerignore
+Dockerfile.*
+*.dockerfile
+
+# ===== ВРЕМЕННЫЕ ФАЙЛЫ =====
+tmp/
+temp/
+*.tmp
+*.temp
+*.cache
+*.swp
+
+# ===== БЕКАПЫ =====
+*.bak
+*.backup
+*.old
+*.orig
+
+# ===== ЗАВИСИМОСТИ =====
+pip-log.txt
+pip-delete-this-directory.txt
+requirements.txt.lock
+poetry.lock
+Pipfile.lock
+
+# ===== ТЕСТЫ =====
+.coverage
+htmlcov/
+.pytest_cache/
+.tox/
+
+# ===== ОС =====
+.DS_Store
+Thumbs.db
+desktop.ini
