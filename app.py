@@ -1,19 +1,14 @@
 import os
 import sqlite3
-import threading
 from datetime import datetime
-from flask import Flask
 from telegram import Update, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, CallbackQueryHandler, ContextTypes, MessageHandler, filters
 
 # ==========================================
-# 1. НАСТРОЙКИ
+# 1. НАСТРОЙКИ (ВСТАВЬТЕ СВОИ ДАННЫЕ)
 # ==========================================
-BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
-ADMIN_ID = 8915047087
-
-# Flask-заглушка
-app_flask = Flask(__name__)
+BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo" 
+ADMIN_ID = 8915047087  # Ваш Telegram ID
 
 # ==========================================
 # 2. БАЗА ДАННЫХ
@@ -50,7 +45,7 @@ def register_user(user_id, username, first_name, last_name):
         conn.close()
 
 # ==========================================
-# 3. МЕНЮ
+# 3. МЕНЮ И КЛАВИАТУРЫ
 # ==========================================
 def main_menu():
     keyboard = [
@@ -60,60 +55,92 @@ def main_menu():
     return InlineKeyboardMarkup(keyboard)
 
 # ==========================================
-# 4. ОБРАБОТЧИКИ
+# 4. ОБРАБОТЧИКИ КОМАНД
 # ==========================================
 async def start_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     register_user(user.id, user.username, user.first_name, user.last_name)
+    
     welcome_text = f"""
 🎖 **Добро пожаловать в BEST RUSSIA (КРМП)!**
 
 🆔 Ваш ID: `{user.id}`
 👤 Никнейм: @{user.username or 'Отсутствует'}
+👤 Имя: {user.first_name}
 
-Это официальный бот для связи с Администрацией.
-Нажмите кнопку ниже, чтобы написать нам.
+Это официальный бот для связи с Администрацией проекта.
+Если у вас есть вопросы, предложения или жалобы — нажмите кнопку ниже.
 """
     await update.message.reply_text(welcome_text, reply_markup=main_menu(), parse_mode="Markdown")
 
+async def help_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text("Нажмите 'Связаться с Администрацией', чтобы написать нам.", reply_markup=main_menu())
+
+# ==========================================
+# 5. ОБРАБОТЧИКИ НАЖАТИЙ КНОПОК
+# ==========================================
 async def button_click(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
+    
     if query.data == "support":
-        await query.edit_message_text("📩 Напишите ваше сообщение. Администрация BEST RUSSIA прочитает его.")
+        await query.edit_message_text(
+            "📩 **Режим связи с Администрацией**\n\n"
+            "Напишите ваше сообщение прямо сейчас. \n"
+            "Администрация проекта BEST RUSSIA прочитает его в ближайшее время."
+        )
     elif query.data == "info":
-        await query.edit_message_text("ℹ️ BEST RUSSIA — развивающийся RP-проект. Все обращения рассматриваются вручную.", reply_markup=main_menu())
+        await query.edit_message_text(
+            "ℹ️ **О BEST RUSSIA**\n\n"
+            "Мы — развивающийся RP-проект. \n"
+            "Все ваши обращения рассматриваются вручную.",
+            reply_markup=main_menu()
+        )
 
+# ==========================================
+# 6. ОБРАБОТЧИК ТЕКСТА (Пересылка Вам)
+# ==========================================
 async def forward_to_admin(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     text = update.message.text
+    
+    # Пересылаем сообщение администратору
     forward_msg = f"""
 ✉️ **НОВОЕ ОБРАЩЕНИЕ BEST RUSSIA**
 
-🆔 ID: `{user.id}`
-👤 Ник: @{user.username or 'Отсутствует'}
+🆔 **ID пользователя:** `{user.id}`
+👤 **Никнейм:** @{user.username or 'Отсутствует'}
+👤 **Имя:** {user.first_name} {user.last_name or ''}
 
-📝 **Текст:**
+📝 **Текст обращения:**
 {text}
+
+---
+_Ответьте пользователю напрямую в ЛС._
 """
     await context.bot.send_message(chat_id=ADMIN_ID, text=forward_msg, parse_mode="Markdown")
-    await update.message.reply_text("✅ Ваше обращение отправлено Администрации!", reply_markup=main_menu())
+    
+    # Подтверждение пользователю
+    await update.message.reply_text(
+        "✅ Ваше обращение успешно отправлено Администрации BEST RUSSIA!\n\nОжидайте ответа в личные сообщения.",
+        reply_markup=main_menu()
+    )
 
 # ==========================================
-# 5. ЗАПУСК (С ПОТОКОМ ДЛЯ WEB SERVICE)
+# 7. ЗАПУСК БОТА
 # ==========================================
 if __name__ == "__main__":
     application = Application.builder().token(BOT_TOKEN).build()
+    
+    # Добавляем обработчики
     application.add_handler(CommandHandler("start", start_command))
+    application.add_handler(CommandHandler("help", help_command))
     application.add_handler(CallbackQueryHandler(button_click))
+    
+    # Ловим любой текст после нажатия кнопки
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, forward_to_admin))
-
-    print("🚀 Запуск бота BEST RUSSIA...")
     
-    # Запускаем бота в фоновом потоке
-    bot_thread = threading.Thread(target=application.run_polling, daemon=True)
-    bot_thread.start()
+    print("🚀 Бот BEST RUSSIA запущен и готов к работе!")
     
-    # Запускаем Flask-заглушку для Render
-    port = int(os.environ.get("PORT", 10000))
-    app_flask.run(host="0.0.0.0", port=port)
+    # Запускаем Polling (он не требует Webhook и работает стабильно)
+    application.run_polling()
