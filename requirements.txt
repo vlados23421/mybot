@@ -1,4 +1,4 @@
-aiogram==3.9.0
+aiogram==2.25.1
 Flask
 openai
 python-dotenv
