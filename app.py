@@ -13,8 +13,8 @@ from aiogram.fsm.state import State, StatesGroup
 from openai import OpenAI
 
 # --- КОНФИГУРАЦИЯ ---
-BOT_TOKEN = os.environ.get("TELEGRAM_BOT_TOKEN")
-OPENROUTER_API_KEY = os.environ.get("OPENROUTER_API_KEY")
+BOT_TOKEN = "8428594117:AAHw06wgDdQ5rxc5SqR7gueh3l9ARVd_SCo"
+OPENROUTER_API_KEY = "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"
 ADMIN_IDS = [8915047087]  # ЗАМЕНИТЕ НА ВАШ ID
 REFERRAL_BONUS = 2
 
