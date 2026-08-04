@@ -10,8 +10,8 @@ from database import init_db, get_user, register_user, update_bonus, get_stats, 
 # ==========================================
 # НАСТРОЙКИ
 # ==========================================
-TOKEN = os.getenv("8428594117:AAG8D4JIswkUVXxYgjiB3KFvPu4geemSbGs")
-ADMIN_ID = int(os.getenv("8915047087"))
+TOKEN = os.getenv("BOT_TOKEN")
+ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 init_db()
 
