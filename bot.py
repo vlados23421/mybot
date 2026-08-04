@@ -11,7 +11,7 @@ from database import init_db, get_user, register_user, update_bonus, get_stats, 
 # НАСТРОЙКИ
 # ==========================================
 TOKEN = os.getenv("8428594117:AAG8D4JIswkUVXxYgjiB3KFvPu4geemSbGs")
-ADMIN_ID = int(os.getenv("8915047087")
+ADMIN_ID = int(os.getenv("8915047087"))
 
 init_db()
 
@@ -39,7 +39,7 @@ TASKS = [
         "id": "task_channel"
     },
     {
-        "name": "Вступи в наш чат общения",
+        "name": "Вступи в чат общения",
         "link": "https://t.me/PrsAdvertisementMy",
         "reward": 300,
         "id": "task_chat"
