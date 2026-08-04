@@ -16,6 +16,13 @@ def init_db():
             reg_date TEXT
         )
     ''')
+    cursor.execute('''
+        CREATE TABLE IF NOT EXISTS completed_tasks (
+            user_id INTEGER,
+            task_id TEXT,
+            PRIMARY KEY (user_id, task_id)
+        )
+    ''')
     conn.commit()
     conn.close()
 
@@ -53,7 +60,8 @@ def get_stats():
     total_coins = cursor.fetchone()[0] or 0
     conn.close()
     return total_users, total_coins
-    
+
+# ===== НОВЫЕ ФУНКЦИИ ДЛЯ ЗАДАНИЙ =====
 def is_task_done(user_id, task_id):
     conn = sqlite3.connect(DB_PATH)
     cursor = conn.cursor()
