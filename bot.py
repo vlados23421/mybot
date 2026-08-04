@@ -99,6 +99,21 @@ async def task_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
     await query.answer()
     data = query.data
     
+    # --- ОБРАБОТКА АДМИНСКИХ КНОПОК ЗАДАНИЙ ---
+    if data == "admin_add_task":
+        await admin_add_task_callback(update, context)
+        return
+    if data == "admin_del_task":
+        await admin_del_task_callback(update, context)
+        return
+    if data.startswith("del_task_"):
+        await admin_del_confirm(update, context)
+        return
+    if data == "admin_back":
+        await admin_back(update, context)
+        return
+    # --- КОНЕЦ ДОБАВЛЕНИЯ ---
+    
     if data == "back_to_menu":
         await start(update, context)
         return
@@ -125,6 +140,28 @@ async def task_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE
                 [InlineKeyboardButton("✅ Я выполнил!", callback_data=f"done_{task_id}")]
             ])
         )
+    
+    if data.startswith("done_"):
+        task_id = int(data.replace("done_", ""))
+        user_id = update.effective_user.id
+        
+        if await is_task_done(user_id, task_id):
+            await query.edit_message_text("✅ Ты уже получил награду!")
+            return
+        
+        task = await get_task(task_id)
+        if not task:
+            await query.edit_message_text("❌ Ошибка!")
+            return
+        
+        reward = task[3]
+        await add_balance(user_id, reward)
+        await mark_task_done(user_id, task_id)
+        
+        await query.edit_message_text(
+            f"🎉 Поздравляем! Ты получил {reward} COINS!\n"
+            f"💰 Новый баланс: {(await get_user(user_id))[3]} COINS"
+                                       )
     
     if data.startswith("done_"):
         task_id = int(data.replace("done_", ""))
