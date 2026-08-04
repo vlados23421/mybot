@@ -207,13 +207,12 @@ async def admin_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not tasks:
         text += "(Заданий пока нет)\n"
     
-    await update.message.reply_text(
-        text,
-        reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("➕ Добавить задание", callback_data="admin_add_task")],
-            [InlineKeyboardButton("❌ Удалить задание", callback_data="admin_del_task")]
-        ])
-    )
+    keyboard = [
+        [InlineKeyboardButton("➕ Добавить задание", callback_data="admin_add_task")],
+        [InlineKeyboardButton("❌ Удалить задание", callback_data="admin_del_task")]
+    ]
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    await update.message.reply_text(text, reply_markup=reply_markup)
 
 async def admin_add_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
@@ -242,7 +241,6 @@ async def admin_del_task_callback(update: Update, context: ContextTypes.DEFAULT_
             callback_data=f"del_task_{task[0]}"
         )])
     kb.append([InlineKeyboardButton("🔙 Назад", callback_data="admin_back")])
-    
     await query.edit_message_text(
         "Выбери задание для удаления:",
         reply_markup=InlineKeyboardMarkup(kb)
@@ -287,13 +285,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     # --- ОБРАБОТКА ВВОДА ТЕКСТА ---
     if context.user_data.get('broadcast_mode') and user_id == ADMIN_ID:
-        conn = None # We will use DB directly via functions
-        # Получаем всех пользователей через функцию
-        # Обратите внимание: get_stats не возвращает список пользователей
-        # Здесь нужна отдельная функция для получения всех user_id, если нужно.
-        # Если у вас нет функции получения всех ID, эта часть рассылки временно пропущена.
-        # Для полноценной рассылки нужно добавить функцию get_all_users() в database.py
-        # Пока просто возвращаем админу, что функция в разработке.
+        conn = None
         context.user_data['broadcast_mode'] = False
         await update.message.reply_text("⏳ Функция рассылки требует доработки для PostgreSQL. Реализую позже.")
         return
@@ -339,7 +331,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "📎 Полезные ссылки":
         await update.message.reply_text("🔗 Наш канал: @CoinFlowNews")
     elif text == "🤖 Наши боты":
-        await update.message.reply_text("🤖 Наш бот: @CoinFlowBot")
+        await update.message.reply_text("🤖 Функция находится в разработке")
     else:
         await update.message.reply_text("⏳ Эта функция находится в разработке! Скоро она заработает.")
 
