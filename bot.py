@@ -2,19 +2,17 @@ import os
 import logging
 import asyncio
 from datetime import datetime
-from telegram import Update, ReplyKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, ContextTypes
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
-# Импортируем нашу базу данных
-from database import init_db, get_user, register_user, update_bonus, get_stats
+from database import init_db, get_user, register_user, update_bonus, get_stats, is_task_done, mark_task_done, add_balance
 
 # ==========================================
-# НАСТРОЙКИ (Берем из Environments на Render)
+# НАСТРОЙКИ
 # ==========================================
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+TOKEN = os.getenv("8428594117:AAG8D4JIswkUVXxYgjiB3KFvPu4geemSbGs")
+ADMIN_ID = int(os.getenv("8915047087")
 
-# Инициализируем базу при запуске
 init_db()
 
 # ==========================================
@@ -31,6 +29,24 @@ admin_keyboard = ReplyKeyboardMarkup([
 ], resize_keyboard=True)
 
 # ==========================================
+# ЗАДАНИЯ (Настрой под свои каналы/чаты)
+# ==========================================
+TASKS = [
+    {
+        "name": "Подпишись на канал CoinFlow News",
+        "link": "https://t.me/CoinFlowNews",
+        "reward": 500,
+        "id": "task_channel"
+    },
+    {
+        "name": "Вступи в наш чат общения",
+        "link": "https://t.me/PrsAdvertisementMy",
+        "reward": 300,
+        "id": "task_chat"
+    }
+]
+
+# ==========================================
 # ФУНКЦИИ БОТА
 # ==========================================
 
@@ -38,19 +54,16 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     register_user(user.id, user.username, user.first_name)
     
-    # Проверяем бонус
     today = datetime.now().strftime("%Y-%m-%d")
     user_data = get_user(user.id)
     last_bonus = user_data[4]
     
-    # Формируем сообщение в зависимости от того, был ли бонус сегодня
     if last_bonus != today:
         update_bonus(user.id, today)
         text = f"🎉 Вам начислен бонус 2500 COINS!\n💰 Баланс: {get_user(user.id)[3]} COINS"
     else:
-        text = f"🏰 Добро пожаловать в PSR BOT!\n💰 Твой баланс: {get_user(user.id)[3]} COINS"
+        text = f"🏰 Добро пожаловать в CoinFlow!\n💰 Твой баланс: {get_user(user.id)[3]} COINS"
     
-    # Отправляем сообщение и клавиатуру
     await update.message.reply_text(text, reply_markup=main_keyboard)
 
 async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -65,16 +78,82 @@ async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
 
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    keyboard = []
+    
+    for task in TASKS:
+        done = is_task_done(user_id, task["id"])
+        if done:
+            status = "✅ (Выполнено)"
+        else:
+            status = f"🔹 Получить {task['reward']} COINS"
+        
+        keyboard.append([InlineKeyboardButton(
+            f"{task['name']} - {status}",
+            callback_data=f"do_task_{task['id']}"
+        )])
+    
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_to_menu")])
+    reply_markup = InlineKeyboardMarkup(keyboard)
+    
     await update.message.reply_text(
-        "🤑 Заработать COINS:\n\n"
-        "1️⃣ Подпишись на наш канал: [PrsAdvertisement](https://t.me/PrsAdvertisement) (Получи 500 COINS)\n"
-        "2️⃣ Вступи в наш чат: [PrsAdvertisementMy](https://t.me/PrsAdvertisementMy) (Получи 300 COINS)\n\n"
-        "Скоро добавим новые задания! 🚀",
-        parse_mode='Markdown'
+        "🤑 Выбери задание:",
+        reply_markup=reply_markup
     )
 
+async def task_button_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    
+    data = query.data
+    
+    if data == "back_to_menu":
+        await start(update, context)
+        return
+    
+    if data.startswith("do_task_"):
+        task_id = data.replace("do_task_", "")
+        user_id = update.effective_user.id
+        
+        if is_task_done(user_id, task_id):
+            await query.edit_message_text("✅ Ты уже выполнил это задание!")
+            return
+        
+        task = next((t for t in TASKS if t["id"] == task_id), None)
+        if not task:
+            await query.edit_message_text("❌ Задание не найдено!")
+            return
+        
+        await query.edit_message_text(
+            f"🔗 Перейди по ссылке:\n{task['link']}\n\n"
+            f"После выполнения нажми кнопку ниже:",
+            reply_markup=InlineKeyboardMarkup([
+                [InlineKeyboardButton("✅ Я выполнил!", callback_data=f"done_{task_id}")]
+            ])
+        )
+    
+    if data.startswith("done_"):
+        task_id = data.replace("done_", "")
+        user_id = update.effective_user.id
+        
+        if is_task_done(user_id, task_id):
+            await query.edit_message_text("✅ Ты уже получил награду!")
+            return
+        
+        task = next((t for t in TASKS if t["id"] == task_id), None)
+        if not task:
+            await query.edit_message_text("❌ Ошибка!")
+            return
+        
+        add_balance(user_id, task["reward"])
+        mark_task_done(user_id, task_id)
+        
+        await query.edit_message_text(
+            f"🎉 Поздравляем! Ты получил {task['reward']} COINS!\n"
+            f"💰 Новый баланс: {get_user(user_id)[3]} COINS"
+        )
+
 async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    # Проверка, что админ именно тот, кто указан в ADMIN_ID
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ У вас нет доступа к админке!")
         return
@@ -99,43 +178,39 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     elif text == "👑 Админка" or text == "📊 Статистика":
         await admin_panel(update, context)
     else:
-        # Временный ответ на все остальные кнопки (мы добавим логику позже)
         await update.message.reply_text("⏳ Эта функция находится в разработке! Скоро она заработает.")
 
 # ==========================================
-# ЗАПУСК БОТА И ВЕБ-СЕРВЕРА (для Render)
+# ЗАПУСК БОТА И ВЕБ-СЕРВЕРА
 # ==========================================
 import aiohttp
 from aiohttp import web
 
-async def handle_health(request):
+async def health_check(request):
     return web.Response(text="OK")
 
 async def main():
-    # Создаем приложение бота
     application = Application.builder().token(TOKEN).build()
 
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CallbackQueryHandler(task_button_handler))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 PSR BOT запущен! Всё готово к работе.")
+    print("🚀 CoinFlow запущен! Всё готово к работе.")
     
-    # Запускаем бота
     await application.initialize()
     await application.start()
     await application.updater.start_polling(allowed_updates=Update.ALL_TYPES)
 
-    # Запускаем маленький веб-сервер на порту 10000 (чтобы Render не убивал бота)
+    port = int(os.environ.get('PORT', 8080))
     app = web.Application()
-    app.router.add_get('/health', handle_health)
+    app.router.add_get('/health', health_check)
     runner = web.AppRunner(app)
     await runner.setup()
-    port = int(os.getenv("PORT", 10000))
     site = web.TCPSite(runner, '0.0.0.0', port)
     await site.start()
     print(f"✅ Веб-сервер запущен на порту {port}")
 
-    # Держим бота активным
     try:
         await asyncio.Event().wait()
     finally:
