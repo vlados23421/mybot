@@ -53,3 +53,25 @@ def get_stats():
     total_coins = cursor.fetchone()[0] or 0
     conn.close()
     return total_users, total_coins
+    
+def is_task_done(user_id, task_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("SELECT COUNT(*) FROM completed_tasks WHERE user_id = ? AND task_id = ?", (user_id, task_id))
+    count = cursor.fetchone()[0]
+    conn.close()
+    return count > 0
+
+def mark_task_done(user_id, task_id):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("INSERT INTO completed_tasks (user_id, task_id) VALUES (?, ?)", (user_id, task_id))
+    conn.commit()
+    conn.close()
+
+def add_balance(user_id, amount):
+    conn = sqlite3.connect(DB_PATH)
+    cursor = conn.cursor()
+    cursor.execute("UPDATE users SET balance = balance + ? WHERE user_id = ?", (amount, user_id))
+    conn.commit()
+    conn.close()
