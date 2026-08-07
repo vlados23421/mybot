@@ -366,7 +366,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
-# ===== ЗАПУСК =====
 async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
@@ -377,11 +376,13 @@ async def main():
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
     print("🚀 CoinFlow с полной админкой запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
+    
+    # ЗАПУСК ВЕБ-СЕРВЕРА ДЛЯ UPTIMEROBOT
+    await start_web_server()
+    
     await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
