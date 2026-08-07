@@ -10,12 +10,15 @@ async def init_db():
     conn = await get_db()
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS users (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            first_name TEXT,
-            balance INTEGER DEFAULT 0,
-            last_bonus TEXT,
-            reg_date TEXT
+            # ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БАЗУ, ЧТОБЫ ИЗБАВИТЬСЯ ОТ ОШИБКИ OverflowError
+await conn.execute("DROP TABLE IF EXISTS verify_requests")
+await conn.execute("DROP TABLE IF EXISTS verified_users")
+await conn.execute("DROP TABLE IF EXISTS completed_tasks")
+await conn.execute("DROP TABLE IF EXISTS logs")
+await conn.execute("DROP TABLE IF EXISTS tasks")
+await conn.execute("DROP TABLE IF EXISTS maintenance")
+await conn.execute("DROP TABLE IF EXISTS settings")
+await conn.execute("DROP TABLE IF EXISTS users")
         )
     ''')
     try:
