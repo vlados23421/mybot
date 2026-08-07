@@ -49,18 +49,32 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_bonus = user_data['last_bonus'] if user_data else None
     bonus = await get_bonus_amount()
 
+    welcome_text = (
+        "🌟 **Добро пожаловать в CoinFlow!** 🌟\n\n"
+        "💰 **Твой личный путь к заработку COINS начинается здесь!**\n\n"
+        "✨ **Что тебя ждёт:**\n"
+        "🪙 Выполняй задания и получай монеты\n"
+        "⚡ Забирай ежедневный бонус\n"
+        "🔓 Открывай эксклюзивные возможности\n\n"
+        "🏆 **Начни прямо сейчас — нажми «Заработать»!**"
+    )
+
     if last_bonus != today:
         await add_balance(user.id, bonus)
         await conn.execute("UPDATE users SET last_bonus = $1 WHERE user_id = $2", today, user.id)
         await conn.close()
         balance = await get_balance(user.id)
-        await update.message.reply_text(f"🎉 Бонус! +{bonus} COINS\n💰 Баланс: {balance}")
-
-    balance = await get_balance(user.id)
-    await update.message.reply_text(
-        f"🏰 Добро пожаловать в CoinFlow!\n💰 Баланс: {balance} COINS",
-        reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
-    )
+        await update.message.reply_text(
+            f"🎁 **Ежедневный бонус получен!**\n"
+            f"➕ {bonus} COINS зачислено на баланс.\n\n"
+            f"{welcome_text}",
+            reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
+        )
+    else:
+        await update.message.reply_text(
+            welcome_text,
+            reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
+        )
 
 async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
