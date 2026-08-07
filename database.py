@@ -61,6 +61,24 @@ async def init_db():
             message TEXT DEFAULT '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!'
         )
     ''')
+    # === НОВЫЕ ТАБЛИЦЫ ДЛЯ ВЕРИФИКАЦИИ ===
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS verify_requests (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            username TEXT,
+            reason TEXT,
+            status TEXT DEFAULT 'pending',
+            date TEXT
+        )
+    ''')
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS verified_users (
+            user_id BIGINT PRIMARY KEY,
+            verified_since TEXT,
+            is_verified BOOLEAN DEFAULT FALSE
+        )
+    ''')
     await conn.execute('''
         INSERT INTO settings (id, bonus_amount) VALUES (1, 2500) ON CONFLICT (id) DO NOTHING
     ''')
@@ -160,7 +178,7 @@ async def set_bonus_amount(new_amount):
     await conn.execute("UPDATE settings SET bonus_amount = $1 WHERE id = 1", new_amount)
     await conn.close()
 
-# ===== ФУНКЦИИ ДЛЯ ТЕХРАБОТ =====
+# === ФУНКЦИИ ДЛЯ ТЕХРАБОТ ===
 async def get_maintenance_mode():
     conn = await get_db()
     res = await conn.fetchval("SELECT mode FROM maintenance WHERE id = 1")
@@ -180,3 +198,48 @@ async def get_maintenance_message():
     res = await conn.fetchval("SELECT message FROM maintenance WHERE id = 1")
     await conn.close()
     return res or "⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!"
+
+# === ФУНКЦИИ ДЛЯ ВЕРИФИКАЦИИ ===
+async def create_verify_request(user_id, username, reason):
+    conn = await get_db()
+    await conn.execute("INSERT INTO verify_requests (user_id, username, reason, status, date) VALUES ($1, $2, $3, 'pending', NOW())", user_id, username, reason)
+    await conn.close()
+
+async def get_pending_requests():
+    conn = await get_db()
+    rows = await conn.fetch("SELECT * FROM verify_requests WHERE status = 'pending' ORDER BY id DESC")
+    await conn.close()
+    return rows
+
+async def approve_request(request_id):
+    conn = await get_db()
+    row = await conn.fetchrow("SELECT user_id, username FROM verify_requests WHERE id = $1", request_id)
+    if row:
+        user_id = row['user_id']
+        username = row['username']
+        await conn.execute("UPDATE verify_requests SET status = 'approved' WHERE id = $1", request_id)
+        await conn.execute(
+            "INSERT INTO verified_users (user_id, verified_since, is_verified) VALUES ($1, NOW(), TRUE) ON CONFLICT (user_id) DO UPDATE SET is_verified = TRUE, verified_since = NOW()",
+            user_id
+        )
+        await conn.close()
+        return user_id, username
+    await conn.close()
+    return None, None
+
+async def reject_request(request_id):
+    conn = await get_db()
+    await conn.execute("UPDATE verify_requests SET status = 'rejected' WHERE id = $1", request_id)
+    await conn.close()
+
+async def is_user_verified(user_id):
+    conn = await get_db()
+    res = await conn.fetchval("SELECT is_verified FROM verified_users WHERE user_id = $1", user_id)
+    await conn.close()
+    return res or False
+
+async def get_user_requests(user_id):
+    conn = await get_db()
+    rows = await conn.fetch("SELECT id, status, date, reason FROM verify_requests WHERE user_id = $1 ORDER BY id DESC", user_id)
+    await conn.close()
+    return rows
