@@ -26,7 +26,6 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["📩 Заявки на верификацию"]
 ], resize_keyboard=True)
 
-# ===== ПРОВЕРКА ТЕХРАБОТ =====
 async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         if await get_maintenance_mode():
@@ -172,7 +171,6 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['support_mode'] = False
         await start(update, context)
 
-# ===== ПОКУПКА COINS (TELEGRAM STARS) =====
 async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
         return
@@ -219,7 +217,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
-# ===== ВЕРИФИКАЦИЯ =====
 async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if await is_user_verified(user_id):
@@ -306,7 +303,6 @@ async def admin_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"ID {req['id']} | @{req['username']} | {req['user_id']}\n{req['reason'][:100]}...\n\n"
     await update.message.reply_text(text)
 
-# ===== ТЕХНИЧЕСКИЕ РАБОТЫ =====
 async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа!")
@@ -337,7 +333,6 @@ async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE
     else:
         await update.message.reply_text("❌ Неизвестная команда. Используй on, off или message.")
 
-# ===== АДМИНКА =====
 async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет доступа")
@@ -519,7 +514,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⏳ В разработке")
 
-# ===== ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT =====
 async def health_check(request):
     return web.Response(text="OK")
 
@@ -537,15 +531,19 @@ async def start_web_server():
 async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
+
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
     application.add_handler(CommandHandler("maintenance", maintenance_command))
+
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
     application.add_handler(CallbackQueryHandler(admin_verify_handler, pattern="^(approve|reject)_"))
+
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+
     print("🚀 CoinFlow с верификацией запущен!")
     await application.initialize()
     await application.start()
