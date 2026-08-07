@@ -217,6 +217,7 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
+# ===== ВЕРИФИКАЦИЯ (НОВАЯ ЛОГИКА БЕЗ КНОПОК) =====
 async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if await is_user_verified(user_id):
@@ -233,32 +234,29 @@ async def handle_verify_request(update: Update, context: ContextTypes.DEFAULT_TY
         user_id = update.effective_user.id
         username = update.effective_user.username or "Нет username"
         await create_verify_request(user_id, username, text)
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user_id}")],
-            [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user_id}")]
-        ])
         await context.bot.send_message(
             ADMIN_ID,
-            f"📩 **Новая заявка на верификацию**\n\nОт: @{username}\nID: {user_id}\n\n**Причина:**\n{text}",
-            reply_markup=keyboard
+            f"📩 **Новая заявка на верификацию**\n\n"
+            f"От: @{username}\nID: `{user_id}`\n\n**Причина:**\n{text}\n\n"
+            f"Чтобы одобрить, напиши в чат:\n`/approve {user_id}`\n"
+            f"Чтобы отклонить, напиши:\n`/reject {user_id}`"
         )
         await update.message.reply_text("✅ Заявка отправлена админу! Ожидай решения.")
         context.user_data['verify_mode'] = False
 
-async def admin_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    
-    # Отрезаем всё, что идёт после последнего знака "_". Это гарантированно будет ID.
-    parts = data.split("_")
-    user_id = int(parts[-1])  # Берём последний элемент
-    action = parts[0] if len(parts) == 2 else "approve"  # Если частей больше, считаем что это approve
-    
-    if action == "approve":
+async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Только для админа!")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
+        return
+    try:
+        user_id = int(args[0])
         await approve_request(user_id)
-        await query.edit_message_text(f"✅ Пользователь {user_id} верифицирован!")
         await add_log(ADMIN_ID, "Одобрил заявку", f"user_id={user_id}")
+        await update.message.reply_text(f"✅ Пользователь {user_id} верифицирован!")
         try:
             await context.bot.send_message(
                 user_id,
@@ -267,14 +265,28 @@ async def admin_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYP
             await add_balance(user_id, 1000)
         except:
             pass
-    elif action == "reject":
+    except:
+        await update.message.reply_text("❌ Неверный ID. Используй: /approve ID")
+
+async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Только для админа!")
+        return
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ Укажи ID пользователя. Пример: /reject 8915047087")
+        return
+    try:
+        user_id = int(args[0])
         await reject_request(user_id)
-        await query.edit_message_text(f"❌ Заявка от {user_id} отклонена.")
         await add_log(ADMIN_ID, "Отклонил заявку", f"user_id={user_id}")
+        await update.message.reply_text(f"❌ Заявка пользователя {user_id} отклонена.")
         try:
             await context.bot.send_message(user_id, "😔 Ваша заявка на верификацию была отклонена.")
         except:
             pass
+    except:
+        await update.message.reply_text("❌ Неверный ID. Используй: /reject ID")
 
 async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -538,16 +550,16 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
     application.add_handler(CommandHandler("maintenance", maintenance_command))
+    application.add_handler(CommandHandler("approve", approve_command))
+    application.add_handler(CommandHandler("reject", reject_command))
 
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
-    application.add_handler(CallbackQueryHandler(admin_verify_handler, pattern="^(approve|reject)_"))
-
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow с верификацией запущен!")
+    print("🚀 CoinFlow с верификацией (без кнопок) запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
