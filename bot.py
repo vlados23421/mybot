@@ -553,19 +553,23 @@ async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
 
+    # Основные команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
     application.add_handler(CommandHandler("maintenance", maintenance_command))
+
+    # Команды верификации (работают глобально, в любом меню)
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
 
+    # Обработчики кнопок
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow запущен!")
+    print("🚀 CoinFlow с верификацией запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
