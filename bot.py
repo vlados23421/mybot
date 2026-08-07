@@ -129,7 +129,7 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['support_mode'] = False
         await start(update, context)
 
-# Покупка COINS
+# ===== ПОКУПКА COINS (TELEGRAM STARS) =====
 async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_500")],
@@ -147,7 +147,11 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if query.data.startswith("buy_"):
         stars = int(query.data.replace("buy_", ""))
-        amount_map = {500: 500, 1500: 1500, 3000: 3000}
+        # Правильное соотношение: 50 звёзд = 500 монет, 150 звёзд = 1500 монет, 300 звёзд = 3000 монет
+        amount_map = {50: 500, 150: 1500, 300: 3000}
+        if stars not in amount_map:
+            await query.edit_message_text("❌ Неверная сумма!")
+            return
         amount = amount_map[stars]
         await context.bot.send_invoice(
             chat_id=update.effective_user.id,
