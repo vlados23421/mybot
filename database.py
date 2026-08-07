@@ -62,8 +62,10 @@ async def init_db():
         )
     ''')
     # === НОВЫЕ ТАБЛИЦЫ ДЛЯ ВЕРИФИКАЦИИ ===
+    # ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ ТАБЛИЦУ (если она была с ошибкой)
+    await conn.execute("DROP TABLE IF EXISTS verify_requests")
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS verify_requests (
+        CREATE TABLE verify_requests (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             username TEXT,
