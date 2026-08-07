@@ -249,8 +249,11 @@ async def admin_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYP
     query = update.callback_query
     await query.answer()
     data = query.data
-    user_id = int(data.split("_")[1])
-    action = data.split("_")[0]
+    
+    # Отрезаем всё, что идёт после последнего знака "_". Это гарантированно будет ID.
+    parts = data.split("_")
+    user_id = int(parts[-1])  # Берём последний элемент
+    action = parts[0] if len(parts) == 2 else "approve"  # Если частей больше, считаем что это approve
     
     if action == "approve":
         await approve_request(user_id)
