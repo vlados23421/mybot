@@ -26,6 +26,7 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["📩 Заявки на верификацию"]
 ], resize_keyboard=True)
 
+# ===== ПРОВЕРКА ТЕХРАБОТ =====
 async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         if await get_maintenance_mode():
@@ -217,7 +218,7 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
-# ===== ВЕРИФИКАЦИЯ (НОВАЯ ЛОГИКА БЕЗ КНОПОК) =====
+# ===== ВЕРИФИКАЦИЯ (без кнопок) =====
 async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if await is_user_verified(user_id):
@@ -253,28 +254,23 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
         return
     
-    import re
-    clean_id = re.sub(r'[^0-9]', '', args[0])
-    
-    if not clean_id:
-        await update.message.reply_text("❌ ID должен состоять только из цифр.")
+    # ЧИСТОЕ ЧИСЛО
+    if not args[0].isdigit():
+        await update.message.reply_text("❌ ID должен состоять только из цифр!")
         return
-        
+
+    user_id = int(args[0])
+    await approve_request(user_id)
+    await add_log(ADMIN_ID, "Одобрил заявку", f"user_id={user_id}")
+    await update.message.reply_text(f"✅ Пользователь {user_id} верифицирован!")
     try:
-        user_id = int(clean_id)
-        await approve_request(user_id)
-        await add_log(ADMIN_ID, "Одобрил заявку", f"user_id={user_id}")
-        await update.message.reply_text(f"✅ Пользователь {user_id} верифицирован!")
-        try:
-            await context.bot.send_message(
-                user_id,
-                "🎉 Поздравляем! Вы прошли верификацию!\n\n✅ Вам начислен бонус +1000 COINS\n✅ Теперь вам доступны эксклюзивные задания!\n✅ В профиле появился бейджик."
-            )
-            await add_balance(user_id, 1000)
-        except:
-            pass
+        await context.bot.send_message(
+            user_id,
+            "🎉 Поздравляем! Вы прошли верификацию!\n\n✅ Вам начислен бонус +1000 COINS\n✅ Теперь вам доступны эксклюзивные задания!\n✅ В профиле появился бейджик."
+        )
+        await add_balance(user_id, 1000)
     except:
-        await update.message.reply_text("❌ Неверный ID. Используй: /approve ID")
+        pass
 
 async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -285,24 +281,18 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
         return
     
-    import re
-    clean_id = re.sub(r'[^0-9]', '', args[0])
-    
-    if not clean_id:
-        await update.message.reply_text("❌ ID должен состоять только из цифр.")
+    if not args[0].isdigit():
+        await update.message.reply_text("❌ ID должен состоять только из цифр!")
         return
-        
+
+    user_id = int(args[0])
+    await reject_request(user_id)
+    await add_log(ADMIN_ID, "Отклонил заявку", f"user_id={user_id}")
+    await update.message.reply_text(f"❌ Заявка пользователя {user_id} отклонена.")
     try:
-        user_id = int(clean_id)
-        await reject_request(user_id)
-        await add_log(ADMIN_ID, "Отклонил заявку", f"user_id={user_id}")
-        await update.message.reply_text(f"❌ Заявка пользователя {user_id} отклонена.")
-        try:
-            await context.bot.send_message(user_id, "😔 Ваша заявка на верификацию была отклонена.")
-        except:
-            pass
+        await context.bot.send_message(user_id, "😔 Ваша заявка на верификацию была отклонена.")
     except:
-        await update.message.reply_text("❌ Неверный ID. Используй: /reject ID")
+        pass
 
 async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
@@ -575,7 +565,7 @@ async def main():
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow с верификацией (без кнопок) запущен!")
+    print("🚀 CoinFlow запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
