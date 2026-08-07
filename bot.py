@@ -252,7 +252,14 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
         return
-    clean_id = args[0].strip()
+    
+    import re
+    clean_id = re.sub(r'[^0-9]', '', args[0])
+    
+    if not clean_id:
+        await update.message.reply_text("❌ ID должен состоять только из цифр.")
+        return
+        
     try:
         user_id = int(clean_id)
         await approve_request(user_id)
@@ -277,7 +284,14 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if not args:
         await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
         return
-    clean_id = args[0].strip()
+    
+    import re
+    clean_id = re.sub(r'[^0-9]', '', args[0])
+    
+    if not clean_id:
+        await update.message.reply_text("❌ ID должен состоять только из цифр.")
+        return
+        
     try:
         user_id = int(clean_id)
         await reject_request(user_id)
