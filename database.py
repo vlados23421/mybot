@@ -15,10 +15,14 @@ async def init_db():
             first_name TEXT,
             balance INTEGER DEFAULT 0,
             last_bonus TEXT,
-            reg_date TEXT,
-            banned INTEGER DEFAULT 0
+            reg_date TEXT
         )
     ''')
+    # Добавляем колонку banned, если она ещё не существует
+    try:
+        await conn.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
+    except:
+        pass  # Если колонка уже есть — просто пропускаем ошибку
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS completed_tasks (
             user_id BIGINT,
