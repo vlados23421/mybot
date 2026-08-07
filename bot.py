@@ -2,10 +2,11 @@ import os
 import asyncio
 import asyncpg
 from datetime import datetime
+from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler, ContextTypes
 
-from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, set_bonus_amount, get_bonus_amount
+from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -107,9 +108,65 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                         [InlineKeyboardButton("🔄 Проверить ещё раз", callback_data=f"do_{task_id}")]
                     ])
                 )
-        except:
+        except Exception as e:
             await query.edit_message_text("❌ Ошибка проверки. Убедись, что канал публичный.")
             return
+
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📞 Поддержка:\nНапиши администратору в ЛС: @ArchibaldNn",
+        reply_markup=ReplyKeyboardMarkup([["🔙 В меню"]], resize_keyboard=True)
+    )
+    context.user_data['support_mode'] = True
+
+async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('support_mode') and update.effective_user.id != ADMIN_ID:
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"📩 Сообщение в поддержку от {update.effective_user.id}:\n\n{update.message.text}"
+        )
+        await update.message.reply_text("✅ Сообщение отправлено!")
+        context.user_data['support_mode'] = False
+        await start(update, context)
+
+# Покупка COINS
+async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_500")],
+        [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_1500")],
+        [InlineKeyboardButton("3000 COINS - 300 ⭐", callback_data="buy_3000")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_buy")]
+    ])
+    await update.message.reply_text("💳 Пополни баланс COINS за Telegram Stars:", reply_markup=keyboard)
+
+async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "back_buy":
+        await start(update, context)
+        return
+    if query.data.startswith("buy_"):
+        stars = int(query.data.replace("buy_", ""))
+        amount_map = {500: 500, 1500: 1500, 3000: 3000}
+        amount = amount_map[stars]
+        await context.bot.send_invoice(
+            chat_id=update.effective_user.id,
+            title="Пополнение COINS",
+            description=f"{amount} COINS на баланс",
+            payload=f"coins_{amount}",
+            currency="XTR",
+            prices=[{"label": f"{amount} COINS", "amount": stars}]
+        )
+
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.pre_checkout_query.answer(ok=True)
+
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payload = update.message.successful_payment.invoice_payload
+    amount = int(payload.replace("coins_", ""))
+    await add_balance(update.effective_user.id, amount)
+    await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
+    await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
 # ===== АДМИНКА =====
 async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -145,8 +202,6 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = "📋 Список пользователей:\n\n"
     for u in users:
         text += f"ID: {u['user_id']} | @{u['username']} | {u['first_name']} | {u['balance']} COINS\n"
-    if len(users) > 30:
-        text += "\n📌 Показаны первые 30 пользователей."
     await update.message.reply_text(text[:4000])
 
 async def admin_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -181,9 +236,7 @@ async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     await update.message.reply_text(
-        "⛔ Введи ID пользователя для бана / разбана:\n"
-        "Используй формат: ID ban или ID unban\n"
-        "Пример: 123456789 ban"
+        "⛔ Введи ID пользователя для бана / разбана:\nИспользуй формат: ID ban или ID unban\nПример: 123456789 ban"
     )
     context.user_data['ban_mode'] = True
 
@@ -213,11 +266,11 @@ async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{l['time'][:19]} | {l['user_id']} | {l['action']} {l['details']}\n"
     await update.message.reply_text(text)
 
+# ===== ОБРАБОТЧИК СООБЩЕНИЙ =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # Обычные кнопки
     if text == "📊 Мой кабинет":
         await my_cabinet(update, context)
     elif text == "🤑 Заработать":
@@ -226,8 +279,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await support(update, context)
     elif text == "💳 Пополнить":
         await buy_coins(update, context)
-
-    # Админские кнопки
+    elif context.user_data.get('support_mode') and user_id != ADMIN_ID:
+        await support_message(update, context)
     elif user_id == ADMIN_ID:
         if text == "📊 Статистика":
             await admin_stats(update, context)
@@ -251,8 +304,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("👋 Выход из админки.", reply_markup=main_keyboard)
         else:
             await update.message.reply_text("⏳ Неизвестная команда.")
-
-    # Обработка ввода админа
     elif context.user_data.get('balance_mode') and user_id == ADMIN_ID:
         try:
             parts = text.split()
@@ -310,62 +361,21 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text("⏳ В разработке")
 
-# Остальные функции (поддержка, покупка) оставляем без изменений...
-async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text(
-        "📞 Поддержка:\nНапиши администратору в ЛС: @ArchibaldNn",
-        reply_markup=ReplyKeyboardMarkup([["🔙 В меню"]], resize_keyboard=True)
-    )
-    context.user_data['support_mode'] = True
+# ===== ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT =====
+async def health_check(request):
+    return web.Response(text="OK")
 
-async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('support_mode') and update.effective_user.id != ADMIN_ID:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"📩 Сообщение в поддержку от {update.effective_user.id}:\n\n{update.message.text}"
-        )
-        await update.message.reply_text("✅ Сообщение отправлено!")
-        context.user_data['support_mode'] = False
-        await start(update, context)
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/health', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get('PORT', 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port}")
 
-async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_500")],
-        [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_1500")],
-        [InlineKeyboardButton("3000 COINS - 300 ⭐", callback_data="buy_3000")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_buy")]
-    ])
-    await update.message.reply_text("💳 Пополни баланс COINS за Telegram Stars:", reply_markup=keyboard)
-
-async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "back_buy":
-        await start(update, context)
-        return
-    if query.data.startswith("buy_"):
-        stars = int(query.data.replace("buy_", ""))
-        amount_map = {500: 500, 1500: 1500, 3000: 3000}
-        amount = amount_map[stars]
-        await context.bot.send_invoice(
-            chat_id=update.effective_user.id,
-            title="Пополнение COINS",
-            description=f"{amount} COINS на баланс",
-            payload=f"coins_{amount}",
-            currency="XTR",
-            prices=[{"label": f"{amount} COINS", "amount": stars}]
-        )
-
-async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=True)
-
-async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    payload = update.message.successful_payment.invoice_payload
-    amount = int(payload.replace("coins_", ""))
-    await add_balance(update.effective_user.id, amount)
-    await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
-    await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
-
+# ===== ЗАПУСК =====
 async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
@@ -382,7 +392,9 @@ async def main():
     await application.start()
     await application.updater.start_polling()
     
-    # ЗАПУСК ВЕБ-СЕРВЕРА ДЛЯ UPTIMEROBOT
     await start_web_server()
     
     await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
