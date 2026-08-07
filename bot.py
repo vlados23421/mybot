@@ -149,9 +149,9 @@ async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
         return
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_500")],
-        [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_1500")],
-        [InlineKeyboardButton("3000 COINS - 300 ⭐", callback_data="buy_3000")],
+        [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_50")],
+        [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_150")],
+        [InlineKeyboardButton("3000 COINS - 300 ⭐", callback_data="buy_300")],
         [InlineKeyboardButton("🔙 Назад", callback_data="back_buy")]
     ])
     await update.message.reply_text("💳 Пополни баланс COINS за Telegram Stars:", reply_markup=keyboard)
@@ -169,14 +169,17 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await query.edit_message_text("❌ Неверная сумма!")
             return
         amount = amount_map[stars]
-        await context.bot.send_invoice(
-            chat_id=update.effective_user.id,
-            title="Пополнение COINS",
-            description=f"{amount} COINS на баланс",
-            payload=f"coins_{amount}",
-            currency="XTR",
-            prices=[{"label": f"{amount} COINS", "amount": stars}]
-        )
+        try:
+            await context.bot.send_invoice(
+                chat_id=update.effective_user.id,
+                title="Пополнение COINS",
+                description=f"{amount} COINS на баланс",
+                payload=f"coins_{amount}",
+                currency="XTR",
+                prices=[{"label": f"{amount} COINS", "amount": stars}]
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ Ошибка отправки счета: {e}")
 
 async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.pre_checkout_query.answer(ok=True)
