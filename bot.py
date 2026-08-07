@@ -249,11 +249,13 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Только для админа!")
         return
     args = context.args
-    if not args:
-        await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
-        return
+if not args:
+    await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
+    return
+# ОЧИЩАЕМ ПЕРВЫЙ АРГУМЕНТ ОТ ЛИШНИХ ПРОБЕЛОВ И СИМВОЛОВ
+clean_id = args[0].strip()
     try:
-        user_id = int(args[0])
+        user_id = int(clean_id)
         await approve_request(user_id)
         await add_log(ADMIN_ID, "Одобрил заявку", f"user_id={user_id}")
         await update.message.reply_text(f"✅ Пользователь {user_id} верифицирован!")
@@ -273,11 +275,13 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("⛔ Только для админа!")
         return
     args = context.args
-    if not args:
-        await update.message.reply_text("❌ Укажи ID пользователя. Пример: /reject 8915047087")
-        return
+if not args:
+    await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
+    return
+# ОЧИЩАЕМ ПЕРВЫЙ АРГУМЕНТ ОТ ЛИШНИХ ПРОБЕЛОВ И СИМВОЛОВ
+clean_id = args[0].strip()
     try:
-        user_id = int(args[0])
+        user_id = int(clean_id)
         await reject_request(user_id)
         await add_log(ADMIN_ID, "Отклонил заявку", f"user_id={user_id}")
         await update.message.reply_text(f"❌ Заявка пользователя {user_id} отклонена.")
