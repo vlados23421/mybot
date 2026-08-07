@@ -8,23 +8,35 @@ async def get_db():
 
 async def init_db():
     conn = await get_db()
+    
+    # Удаляем старые таблицы, чтобы избавиться от OverflowError
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            # ПРИНУДИТЕЛЬНО УДАЛЯЕМ СТАРУЮ БАЗУ, ЧТОБЫ ИЗБАВИТЬСЯ ОТ ОШИБКИ OverflowError
-await conn.execute("DROP TABLE IF EXISTS verify_requests")
-await conn.execute("DROP TABLE IF EXISTS verified_users")
-await conn.execute("DROP TABLE IF EXISTS completed_tasks")
-await conn.execute("DROP TABLE IF EXISTS logs")
-await conn.execute("DROP TABLE IF EXISTS tasks")
-await conn.execute("DROP TABLE IF EXISTS maintenance")
-await conn.execute("DROP TABLE IF EXISTS settings")
-await conn.execute("DROP TABLE IF EXISTS users")
-        )
+        DROP TABLE IF EXISTS verify_requests;
+        DROP TABLE IF EXISTS verified_users;
+        DROP TABLE IF EXISTS completed_tasks;
+        DROP TABLE IF EXISTS logs;
+        DROP TABLE IF EXISTS tasks;
+        DROP TABLE IF EXISTS maintenance;
+        DROP TABLE IF EXISTS settings;
+        DROP TABLE IF EXISTS users;
     ''')
+    
     try:
         await conn.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
     except Exception:
         pass
+    
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS users (
+            user_id BIGINT PRIMARY KEY,
+            username TEXT,
+            first_name TEXT,
+            balance INTEGER DEFAULT 0,
+            last_bonus TEXT,
+            reg_date TEXT
+        )
+    ''')
+    
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS completed_tasks (
             user_id BIGINT,
@@ -32,6 +44,7 @@ await conn.execute("DROP TABLE IF EXISTS users")
             PRIMARY KEY (user_id, task_id)
         )
     ''')
+    
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS tasks (
             id SERIAL PRIMARY KEY,
@@ -42,6 +55,7 @@ await conn.execute("DROP TABLE IF EXISTS users")
             active INTEGER DEFAULT 1
         )
     ''')
+    
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS logs (
             id SERIAL PRIMARY KEY,
@@ -51,12 +65,14 @@ await conn.execute("DROP TABLE IF EXISTS users")
             time TEXT
         )
     ''')
+    
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS settings (
             id INTEGER PRIMARY KEY,
             bonus_amount INTEGER DEFAULT 2500
         )
     ''')
+    
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS maintenance (
             id INTEGER PRIMARY KEY,
@@ -64,10 +80,10 @@ await conn.execute("DROP TABLE IF EXISTS users")
             message TEXT DEFAULT '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!'
         )
     ''')
-    # ===== ВЕРИФИКАЦИЯ (чистая таблица) =====
-    await conn.execute("DROP TABLE IF EXISTS verify_requests")
+    
+    # Таблицы для верификации
     await conn.execute('''
-        CREATE TABLE verify_requests (
+        CREATE TABLE IF NOT EXISTS verify_requests (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             username TEXT,
@@ -76,6 +92,7 @@ await conn.execute("DROP TABLE IF EXISTS users")
             date TEXT
         )
     ''')
+    
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS verified_users (
             user_id BIGINT PRIMARY KEY,
@@ -83,13 +100,16 @@ await conn.execute("DROP TABLE IF EXISTS users")
             is_verified BOOLEAN DEFAULT FALSE
         )
     ''')
+    
     await conn.execute('''
         INSERT INTO settings (id, bonus_amount) VALUES (1, 2500) ON CONFLICT (id) DO NOTHING
     ''')
+    
     await conn.execute('''
         INSERT INTO maintenance (id, mode, message) VALUES (1, 0, '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!')
         ON CONFLICT (id) DO NOTHING
     ''')
+    
     await conn.close()
 
 async def get_user(user_id):
@@ -182,7 +202,7 @@ async def set_bonus_amount(new_amount):
     await conn.execute("UPDATE settings SET bonus_amount = $1 WHERE id = 1", new_amount)
     await conn.close()
 
-# === ТЕХРАБОТЫ ===
+# ===== ТЕХРАБОТЫ =====
 async def get_maintenance_mode():
     conn = await get_db()
     res = await conn.fetchval("SELECT mode FROM maintenance WHERE id = 1")
@@ -203,7 +223,7 @@ async def get_maintenance_message():
     await conn.close()
     return res or "⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!"
 
-# === ВЕРИФИКАЦИЯ ===
+# ===== ВЕРИФИКАЦИЯ =====
 async def create_verify_request(user_id, username, reason):
     conn = await get_db()
     await conn.execute("INSERT INTO verify_requests (user_id, username, reason, status, date) VALUES ($1, $2, $3, 'pending', NOW())", user_id, username, reason)
