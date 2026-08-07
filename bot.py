@@ -6,14 +6,15 @@ from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler, ContextTypes
 
-from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount, get_maintenance_mode, set_maintenance_mode, get_maintenance_message
+from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount, get_maintenance_mode, set_maintenance_mode, get_maintenance_message, create_verify_request, get_pending_requests, approve_request, reject_request, is_user_verified, get_user_requests
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 main_keyboard = ReplyKeyboardMarkup([
     ["🤑 Заработать", "📊 Мой кабинет"],
-    ["📞 Поддержка", "💳 Пополнить"]
+    ["📞 Поддержка", "💳 Пополнить"],
+    ["🔰 Верификация"]
 ], resize_keyboard=True)
 
 admin_keyboard = ReplyKeyboardMarkup([
@@ -21,7 +22,8 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["⚖️ Изменить баланс", "📋 Активные задания"],
     ["📢 Рассылка", "⛔ Забанить / Разбанить"],
     ["📤 Экспорт в файл", "⚙️ Настроить бонус"],
-    ["📜 Журнал событий", "🔙 Выйти из админки"]
+    ["📜 Журнал событий", "🔙 Выйти из админки"],
+    ["📩 Заявки на верификацию"]
 ], resize_keyboard=True)
 
 # ===== ПРОВЕРКА ТЕХРАБОТ =====
@@ -63,8 +65,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     balance = await get_balance(user_id)
+    verified = await is_user_verified(user_id)
+    badge = " ✅ (Верифицирован)" if verified else ""
     await update.message.reply_text(
-        f"📊 Мой кабинет\n🆔 ID: {user_id}\n💰 Баланс: {balance} COINS"
+        f"📊 Мой кабинет{badge}\n🆔 ID: {user_id}\n💰 Баланс: {balance} COINS"
     )
 
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -83,6 +87,9 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{task['name']} - {status}",
             callback_data=f"do_{task['id']}"
         )])
+    # === ЭКСКЛЮЗИВНЫЕ ЗАДАНИЯ ДЛЯ ВЕРИФИЦИРОВАННЫХ ===
+    if await is_user_verified(user_id):
+        keyboard.append([InlineKeyboardButton("🔒 Эксклюзивное задание: +2000 COINS", callback_data="do_exclusive")])
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_tasks")])
     await update.message.reply_text(
         "🤑 Доступные задания:",
@@ -124,6 +131,14 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text("❌ Ошибка проверки. Убедись, что канал публичный.")
             return
+    if data == "do_exclusive":
+        if not await is_user_verified(user_id):
+            await query.edit_message_text("❌ Это задание только для верифицированных пользователей!")
+            return
+        # Имитация эксклюзивного задания
+        await add_balance(user_id, 2000)
+        await add_log(user_id, "Выполнил эксклюзивное задание", "+2000 COINS")
+        await query.edit_message_text("🎉 Эксклюзивное задание выполнено! +2000 COINS")
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
@@ -191,34 +206,121 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
+# ===== ВЕРИФИКАЦИЯ =====
+async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    if await is_user_verified(user_id):
+        await update.message.reply_text("✅ Вы уже верифицированы!")
+        return
+    await update.message.reply_text(
+        "🔰 **Подача заявки на верификацию**\n\n"
+        "Расскажи кратко о себе и почему хочешь получить статус:\n"
+        "(Отправь одним сообщением)"
+    )
+    context.user_data['verify_mode'] = True
+
+async def handle_verify_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('verify_mode'):
+        text = update.message.text
+        user_id = update.effective_user.id
+        username = update.effective_user.username or "Нет username"
+        await create_verify_request(user_id, username, text)
+        keyboard = InlineKeyboardMarkup([
+            [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_{user_id}")],
+            [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_{user_id}")]
+        ])
+        await context.bot.send_message(
+            ADMIN_ID,
+            f"📩 **Новая заявка на верификацию**\n\n"
+            f"От: @{username}\nID: {user_id}\n\n**Причина:**\n{text}",
+            reply_markup=keyboard
+        )
+        await update.message.reply_text("✅ Заявка отправлена админу! Ожидай решения.")
+        context.user_data['verify_mode'] = False
+
+async def admin_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = int(data.split("_")[1])
+    action = data.split("_")[0]
+    
+    if action == "approve":
+        await approve_request(user_id)
+        await query.edit_message_text(f"✅ Пользователь {user_id} верифицирован!")
+        await add_log(ADMIN_ID, "Одобрил заявку", f"user_id={user_id}")
+        try:
+            await context.bot.send_message(
+                user_id,
+                "🎉 Поздравляем! Вы прошли верификацию!\n\n"
+                "✅ Вам начислен бонус +1000 COINS\n"
+                "✅ Теперь вам доступны эксклюзивные задания!\n"
+                "✅ В профиле появился бейджик."
+            )
+            await add_balance(user_id, 1000)
+        except:
+            pass
+    elif action == "reject":
+        await reject_request(user_id)
+        await query.edit_message_text(f"❌ Заявка от {user_id} отклонена.")
+        await add_log(ADMIN_ID, "Отклонил заявку", f"user_id={user_id}")
+        try:
+            await context.bot.send_message(user_id, "😔 Ваша заявка на верификацию была отклонена.")
+        except:
+            pass
+
+async def my_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    requests = await get_user_requests(user_id)
+    if not requests:
+        await update.message.reply_text("📭 У вас пока нет заявок на верификацию.")
+        return
+    text = "📋 История ваших заявок:\n\n"
+    for req in requests:
+        status = req['status']
+        if status == 'pending':
+            status_emoji = "⏳ Ожидает"
+        elif status == 'approved':
+            status_emoji = "✅ Одобрена"
+        else:
+            status_emoji = "❌ Отклонена"
+        text += f"{req['date'][:19]} — {status_emoji}\n{req['reason'][:50]}...\n\n"
+    await update.message.reply_text(text)
+
+async def admin_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        return
+    requests = await get_pending_requests()
+    if not requests:
+        await update.message.reply_text("📭 Нет ожидающих заявок.")
+        return
+    text = "📩 Ожидающие заявки на верификацию:\n\n"
+    for req in requests:
+        text += f"ID {req['id']} | @{req['username']} | {req['user_id']}\n{req['reason'][:100]}...\n\n"
+    await update.message.reply_text(text)
+
 # ===== ТЕХНИЧЕСКИЕ РАБОТЫ =====
 async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа!")
         return
-    
     args = context.args
     if not args:
         current = await get_maintenance_mode()
         status = "ВКЛЮЧЕН" if current else "ВЫКЛЮЧЕН"
         await update.message.reply_text(
             f"⚙️ Режим техработ: {status}\n\n"
-            f"Используй:\n"
-            f"/maintenance on - включить\n"
-            f"/maintenance off - выключить\n"
-            f"/maintenance message Текст - сменить сообщение"
+            f"Используй:\n/maintenance on - включить\n/maintenance off - выключить\n/maintenance message Текст - сменить сообщение"
         )
         return
-    
     action = args[0].lower()
-    
     if action == "on":
         await set_maintenance_mode(True)
-        await update.message.reply_text("✅ Режим техработ ВКЛЮЧЁН. Пользователи увидят заглушку.")
+        await update.message.reply_text("✅ Режим техработ ВКЛЮЧЁН.")
         await add_log(update.effective_user.id, "Включил техработы")
     elif action == "off":
         await set_maintenance_mode(False)
-        await update.message.reply_text("✅ Режим техработ ВЫКЛЮЧЕН. Бот снова работает.")
+        await update.message.reply_text("✅ Режим техработ ВЫКЛЮЧЕН.")
         await add_log(update.effective_user.id, "Выключил техработы")
     elif action == "message" and len(args) > 1:
         new_msg = " ".join(args[1:])
@@ -239,20 +341,14 @@ async def admin_panel(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет доступа")
         return
-    await update.message.reply_text(
-        "👑 Панель управления CoinFlow",
-        reply_markup=admin_keyboard
-    )
+    await update.message.reply_text("👑 Панель управления CoinFlow", reply_markup=admin_keyboard)
 
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     total_users, total_coins, tasks_done = await get_stats()
     await update.message.reply_text(
-        f"📊 Статистика\n"
-        f"👥 Пользователей: {total_users}\n"
-        f"💰 Всего COINS: {total_coins}\n"
-        f"✅ Выполнено заданий: {tasks_done}"
+        f"📊 Статистика\n👥 Пользователей: {total_users}\n💰 Всего COINS: {total_coins}\n✅ Выполнено заданий: {tasks_done}"
     )
 
 async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -267,9 +363,7 @@ async def admin_users(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    await update.message.reply_text(
-        "⚖️ Введи ID и сумму через пробел:\nПример: 123456789 500"
-    )
+    await update.message.reply_text("⚖️ Введи ID и сумму через пробел:\nПример: 123456789 500")
     context.user_data['balance_mode'] = True
 
 async def admin_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -287,17 +381,13 @@ async def admin_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    await update.message.reply_text(
-        "📢 Введи текст для рассылки всем пользователям:"
-    )
+    await update.message.reply_text("📢 Введи текст для рассылки всем пользователям:")
     context.user_data['broadcast_mode'] = True
 
 async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    await update.message.reply_text(
-        "⛔ Введи ID пользователя для бана / разбана:\nИспользуй формат: ID ban или ID unban\nПример: 123456789 ban"
-    )
+    await update.message.reply_text("⛔ Введи ID пользователя для бана / разбана:\nИспользуй формат: ID ban или ID unban\nПример: 123456789 ban")
     context.user_data['ban_mode'] = True
 
 async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -312,9 +402,7 @@ async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    await update.message.reply_text(
-        "⚙️ Введи новую сумму ежедневного бонуса:\n(Например: 3000)"
-    )
+    await update.message.reply_text("⚙️ Введи новую сумму ежедневного бонуса:\n(Например: 3000)")
     context.user_data['bonus_mode'] = True
 
 async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -326,7 +414,6 @@ async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"{l['time'][:19]} | {l['user_id']} | {l['action']} {l['details']}\n"
     await update.message.reply_text(text)
 
-# ===== ОБРАБОТЧИК СООБЩЕНИЙ =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
         return
@@ -341,6 +428,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await support(update, context)
     elif text == "💳 Пополнить":
         await buy_coins(update, context)
+    elif text == "🔰 Верификация":
+        await verify_user(update, context)
+    elif text == "📩 Заявки на верификацию" and user_id == ADMIN_ID:
+        await admin_requests(update, context)
+    elif context.user_data.get('verify_mode'):
+        await handle_verify_request(update, context)
     elif context.user_data.get('support_mode') and user_id != ADMIN_ID:
         await support_message(update, context)
     elif user_id == ADMIN_ID:
@@ -377,7 +470,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❌ Ошибка! Используй: ID Сумма")
         context.user_data['balance_mode'] = False
-
     elif context.user_data.get('broadcast_mode') and user_id == ADMIN_ID:
         users = await get_all_users()
         sent = 0
@@ -390,7 +482,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await add_log(user_id, "Сделал рассылку", f"{sent} пользователей")
         await update.message.reply_text(f"✅ Рассылка отправлена! {sent} человек.")
         context.user_data['broadcast_mode'] = False
-
     elif context.user_data.get('ban_mode') and user_id == ADMIN_ID:
         try:
             parts = text.split()
@@ -405,59 +496,4 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await add_log(user_id, "Разбанил", str(target_id))
                 await update.message.reply_text(f"✅ Пользователь {target_id} разбанен.")
             else:
-                await update.message.reply_text("❌ Используй: ID ban или ID unban")
-        except:
-            await update.message.reply_text("❌ Ошибка! Используй: ID ban или ID unban")
-        context.user_data['ban_mode'] = False
-
-    elif context.user_data.get('bonus_mode') and user_id == ADMIN_ID:
-        try:
-            new_bonus = int(text)
-            await set_bonus_amount(new_bonus)
-            await add_log(user_id, "Изменил бонус", str(new_bonus))
-            await update.message.reply_text(f"✅ Бонус изменён на {new_bonus} COINS")
-        except:
-            await update.message.reply_text("❌ Введи число!")
-        context.user_data['bonus_mode'] = False
-
-    else:
-        await update.message.reply_text("⏳ В разработке")
-
-# ===== ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT =====
-async def health_check(request):
-    return web.Response(text="OK")
-
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/health', health_check)
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get('PORT', 8080))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"✅ Веб-сервер запущен на порту {port}")
-
-# ===== ЗАПУСК =====
-async def main():
-    await init_db()
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("adminka", adminka_command))
-    application.add_handler(CommandHandler("maintenance", maintenance_command))
-    application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
-    application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    
-    print("🚀 CoinFlow с полной админкой и техработами запущен!")
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    
-    await start_web_server()
-    
-    await asyncio.Event().wait()
-
-if __name__ == "__main__":
-    asyncio.run(main())
+                await update.message
