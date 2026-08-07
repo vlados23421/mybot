@@ -65,14 +65,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await conn.close()
         balance = await get_balance(user.id)
         await update.message.reply_text(
-            f"🎁 **Ежедневный бонус получен!**\n"
-            f"➕ {bonus} COINS зачислено на баланс.\n\n"
-            f"{welcome_text}",
+            f"🎁 **Ежедневный бонус получен!**\n➕ {bonus} COINS зачислено на баланс.\n\n{welcome_text}",
+            parse_mode='Markdown',
             reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
         )
     else:
         await update.message.reply_text(
             welcome_text,
+            parse_mode='Markdown',
             reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
         )
 
@@ -82,7 +82,8 @@ async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     verified = await is_user_verified(user_id)
     badge = " ✅ (Верифицирован)" if verified else ""
     await update.message.reply_text(
-        f"📊 Мой кабинет{badge}\n🆔 ID: {user_id}\n💰 Баланс: {balance} COINS"
+        f"📊 Мой кабинет{badge}\n🆔 ID: {user_id}\n💰 Баланс: {balance} COINS",
+        parse_mode='Markdown'
     )
 
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -225,9 +226,7 @@ async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("✅ Вы уже верифицированы!")
         return
     await update.message.reply_text(
-        "🔰 **Подача заявки на верификацию**\n\n"
-        "Расскажи кратко о себе и почему хочешь получить статус:\n"
-        "(Отправь одним сообщением)"
+        "🔰 **Подача заявки на верификацию**\n\nРасскажи кратко о себе и почему хочешь получить статус:\n(Отправь одним сообщением)"
     )
     context.user_data['verify_mode'] = True
 
@@ -243,8 +242,7 @@ async def handle_verify_request(update: Update, context: ContextTypes.DEFAULT_TY
         ])
         await context.bot.send_message(
             ADMIN_ID,
-            f"📩 **Новая заявка на верификацию**\n\n"
-            f"От: @{username}\nID: {user_id}\n\n**Причина:**\n{text}",
+            f"📩 **Новая заявка на верификацию**\n\nОт: @{username}\nID: {user_id}\n\n**Причина:**\n{text}",
             reply_markup=keyboard
         )
         await update.message.reply_text("✅ Заявка отправлена админу! Ожидай решения.")
@@ -264,10 +262,7 @@ async def admin_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         try:
             await context.bot.send_message(
                 user_id,
-                "🎉 Поздравляем! Вы прошли верификацию!\n\n"
-                "✅ Вам начислен бонус +1000 COINS\n"
-                "✅ Теперь вам доступны эксклюзивные задания!\n"
-                "✅ В профиле появился бейджик."
+                "🎉 Поздравляем! Вы прошли верификацию!\n\n✅ Вам начислен бонус +1000 COINS\n✅ Теперь вам доступны эксклюзивные задания!\n✅ В профиле появился бейджик."
             )
             await add_balance(user_id, 1000)
         except:
