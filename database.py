@@ -18,11 +18,10 @@ async def init_db():
             reg_date TEXT
         )
     ''')
-    # Добавляем колонку banned, если она ещё не существует
     try:
         await conn.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
-    except:
-        pass  # Если колонка уже есть — просто пропускаем ошибку
+    except Exception:
+        pass
     await conn.execute('''
         CREATE TABLE IF NOT EXISTS completed_tasks (
             user_id BIGINT,
@@ -56,7 +55,18 @@ async def init_db():
         )
     ''')
     await conn.execute('''
+        CREATE TABLE IF NOT EXISTS maintenance (
+            id INTEGER PRIMARY KEY,
+            mode INTEGER DEFAULT 0,
+            message TEXT DEFAULT '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!'
+        )
+    ''')
+    await conn.execute('''
         INSERT INTO settings (id, bonus_amount) VALUES (1, 2500) ON CONFLICT (id) DO NOTHING
+    ''')
+    await conn.execute('''
+        INSERT INTO maintenance (id, mode, message) VALUES (1, 0, '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!')
+        ON CONFLICT (id) DO NOTHING
     ''')
     await conn.close()
 
@@ -149,3 +159,24 @@ async def set_bonus_amount(new_amount):
     conn = await get_db()
     await conn.execute("UPDATE settings SET bonus_amount = $1 WHERE id = 1", new_amount)
     await conn.close()
+
+# ===== ФУНКЦИИ ДЛЯ ТЕХРАБОТ =====
+async def get_maintenance_mode():
+    conn = await get_db()
+    res = await conn.fetchval("SELECT mode FROM maintenance WHERE id = 1")
+    await conn.close()
+    return res == 1
+
+async def set_maintenance_mode(status, message=None):
+    conn = await get_db()
+    if message:
+        await conn.execute("UPDATE maintenance SET mode = $1, message = $2 WHERE id = 1", 1 if status else 0, message)
+    else:
+        await conn.execute("UPDATE maintenance SET mode = $1 WHERE id = 1", 1 if status else 0)
+    await conn.close()
+
+async def get_maintenance_message():
+    conn = await get_db()
+    res = await conn.fetchval("SELECT message FROM maintenance WHERE id = 1")
+    await conn.close()
+    return res or "⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!"
