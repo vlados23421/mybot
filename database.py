@@ -8,45 +8,40 @@ async def get_db():
 
 async def init_db():
     conn = await get_db()
-    
-    # Удаляем старые таблицы, чтобы избавиться от OverflowError
+
+    # 1. Жёстко удаляем старые таблицы, чтобы пересоздать их с правильными типами
+    await conn.execute("DROP TABLE IF EXISTS verify_requests")
+    await conn.execute("DROP TABLE IF EXISTS verified_users")
+    await conn.execute("DROP TABLE IF EXISTS completed_tasks")
+    await conn.execute("DROP TABLE IF EXISTS logs")
+    await conn.execute("DROP TABLE IF EXISTS tasks")
+    await conn.execute("DROP TABLE IF EXISTS maintenance")
+    await conn.execute("DROP TABLE IF EXISTS settings")
+    await conn.execute("DROP TABLE IF EXISTS users")
+
+    # 2. Создаём таблицу users с колонкой banned
     await conn.execute('''
-        DROP TABLE IF EXISTS verify_requests;
-        DROP TABLE IF EXISTS verified_users;
-        DROP TABLE IF EXISTS completed_tasks;
-        DROP TABLE IF EXISTS logs;
-        DROP TABLE IF EXISTS tasks;
-        DROP TABLE IF EXISTS maintenance;
-        DROP TABLE IF EXISTS settings;
-        DROP TABLE IF EXISTS users;
-    ''')
-    
-    try:
-        await conn.execute("ALTER TABLE users ADD COLUMN banned INTEGER DEFAULT 0")
-    except Exception:
-        pass
-    
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
+        CREATE TABLE users (
             user_id BIGINT PRIMARY KEY,
             username TEXT,
             first_name TEXT,
             balance INTEGER DEFAULT 0,
             last_bonus TEXT,
-            reg_date TEXT
+            reg_date TEXT,
+            banned INTEGER DEFAULT 0
         )
     ''')
-    
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS completed_tasks (
+        CREATE TABLE completed_tasks (
             user_id BIGINT,
             task_id INTEGER,
             PRIMARY KEY (user_id, task_id)
         )
     ''')
-    
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS tasks (
+        CREATE TABLE tasks (
             id SERIAL PRIMARY KEY,
             name TEXT,
             link TEXT,
@@ -55,9 +50,9 @@ async def init_db():
             active INTEGER DEFAULT 1
         )
     ''')
-    
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS logs (
+        CREATE TABLE logs (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             action TEXT,
@@ -65,25 +60,24 @@ async def init_db():
             time TEXT
         )
     ''')
-    
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS settings (
+        CREATE TABLE settings (
             id INTEGER PRIMARY KEY,
             bonus_amount INTEGER DEFAULT 2500
         )
     ''')
-    
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS maintenance (
+        CREATE TABLE maintenance (
             id INTEGER PRIMARY KEY,
             mode INTEGER DEFAULT 0,
             message TEXT DEFAULT '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!'
         )
     ''')
-    
-    # Таблицы для верификации
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS verify_requests (
+        CREATE TABLE verify_requests (
             id SERIAL PRIMARY KEY,
             user_id BIGINT,
             username TEXT,
@@ -92,24 +86,24 @@ async def init_db():
             date TEXT
         )
     ''')
-    
+
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS verified_users (
+        CREATE TABLE verified_users (
             user_id BIGINT PRIMARY KEY,
             verified_since TEXT,
             is_verified BOOLEAN DEFAULT FALSE
         )
     ''')
-    
+
     await conn.execute('''
         INSERT INTO settings (id, bonus_amount) VALUES (1, 2500) ON CONFLICT (id) DO NOTHING
     ''')
-    
+
     await conn.execute('''
         INSERT INTO maintenance (id, mode, message) VALUES (1, 0, '⚙️ Бот на техническом обслуживании. Мы скоро вернёмся!')
         ON CONFLICT (id) DO NOTHING
     ''')
-    
+
     await conn.close()
 
 async def get_user(user_id):
