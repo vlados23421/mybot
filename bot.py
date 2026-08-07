@@ -6,7 +6,7 @@ from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler, ContextTypes
 
-from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount
+from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount, get_maintenance_mode, set_maintenance_mode, get_maintenance_message
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
@@ -24,7 +24,18 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["📜 Журнал событий", "🔙 Выйти из админки"]
 ], resize_keyboard=True)
 
+# ===== ПРОВЕРКА ТЕХРАБОТ =====
+async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        if await get_maintenance_mode():
+            msg = await get_maintenance_message()
+            await update.message.reply_text(msg)
+            return True
+    return False
+
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     user = update.effective_user
     await register_user(user.id, user.username, user.first_name)
     if await is_banned(user.id):
@@ -57,6 +68,8 @@ async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     user_id = update.effective_user.id
     tasks = await get_active_tasks()
     if not tasks:
@@ -113,6 +126,8 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     await update.message.reply_text(
         "📞 Поддержка:\nНапиши администратору в ЛС: @ArchibaldNn",
         reply_markup=ReplyKeyboardMarkup([["🔙 В меню"]], resize_keyboard=True)
@@ -131,6 +146,8 @@ async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ПОКУПКА COINS (TELEGRAM STARS) =====
 async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_500")],
         [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_1500")],
@@ -147,7 +164,6 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if query.data.startswith("buy_"):
         stars = int(query.data.replace("buy_", ""))
-        # Правильное соотношение: 50 звёзд = 500 монет, 150 звёзд = 1500 монет, 300 звёзд = 3000 монет
         amount_map = {50: 500, 150: 1500, 300: 3000}
         if stars not in amount_map:
             await query.edit_message_text("❌ Неверная сумма!")
@@ -171,6 +187,43 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_balance(update.effective_user.id, amount)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
+
+# ===== ТЕХНИЧЕСКИЕ РАБОТЫ =====
+async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Только для админа!")
+        return
+    
+    args = context.args
+    if not args:
+        current = await get_maintenance_mode()
+        status = "ВКЛЮЧЕН" if current else "ВЫКЛЮЧЕН"
+        await update.message.reply_text(
+            f"⚙️ Режим техработ: {status}\n\n"
+            f"Используй:\n"
+            f"/maintenance on - включить\n"
+            f"/maintenance off - выключить\n"
+            f"/maintenance message Текст - сменить сообщение"
+        )
+        return
+    
+    action = args[0].lower()
+    
+    if action == "on":
+        await set_maintenance_mode(True)
+        await update.message.reply_text("✅ Режим техработ ВКЛЮЧЁН. Пользователи увидят заглушку.")
+        await add_log(update.effective_user.id, "Включил техработы")
+    elif action == "off":
+        await set_maintenance_mode(False)
+        await update.message.reply_text("✅ Режим техработ ВЫКЛЮЧЕН. Бот снова работает.")
+        await add_log(update.effective_user.id, "Выключил техработы")
+    elif action == "message" and len(args) > 1:
+        new_msg = " ".join(args[1:])
+        await set_maintenance_mode(True, new_msg)
+        await update.message.reply_text(f"✅ Сообщение техработ обновлено:\n\n{new_msg}")
+        await add_log(update.effective_user.id, "Изменил сообщение техработ", new_msg)
+    else:
+        await update.message.reply_text("❌ Неизвестная команда. Используй on, off или message.")
 
 # ===== АДМИНКА =====
 async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -272,6 +325,8 @@ async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 # ===== ОБРАБОТЧИК СООБЩЕНИЙ =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     text = update.message.text
     user_id = update.effective_user.id
 
@@ -385,13 +440,14 @@ async def main():
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
+    application.add_handler(CommandHandler("maintenance", maintenance_command))
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     
-    print("🚀 CoinFlow с полной админкой запущен!")
+    print("🚀 CoinFlow с полной админкой и техработами запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
