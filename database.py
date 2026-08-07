@@ -1,6 +1,5 @@
 import asyncpg
 import os
-from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -46,6 +45,15 @@ async def init_db():
             time TEXT
         )
     ''')
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS settings (
+            id INTEGER PRIMARY KEY,
+            bonus_amount INTEGER DEFAULT 2500
+        )
+    ''')
+    await conn.execute('''
+        INSERT INTO settings (id, bonus_amount) VALUES (1, 2500) ON CONFLICT (id) DO NOTHING
+    ''')
     await conn.close()
 
 async def get_user(user_id):
@@ -57,8 +65,8 @@ async def get_user(user_id):
 async def register_user(user_id, username, first_name):
     conn = await get_db()
     await conn.execute('''
-        INSERT INTO users (user_id, username, first_name, balance, reg_date)
-        VALUES ($1, $2, $3, 0, NOW())
+        INSERT INTO users (user_id, username, first_name, balance, reg_date, banned)
+        VALUES ($1, $2, $3, 0, NOW(), 0)
         ON CONFLICT (user_id) DO NOTHING
     ''', user_id, username, first_name)
     await conn.close()
@@ -94,29 +102,27 @@ async def mark_task_done(user_id, task_id):
 async def get_stats():
     conn = await get_db()
     total_users = await conn.fetchval("SELECT COUNT(*) FROM users WHERE banned = 0")
-    total_coins = await conn.fetchval("SELECT SUM(balance) FROM users")
+    total_coins = await conn.fetchval("SELECT SUM(balance) FROM users") or 0
     tasks_done = await conn.fetchval("SELECT COUNT(*) FROM completed_tasks")
     await conn.close()
     return total_users, total_coins, tasks_done
 
-# ===== НОВЫЕ ФУНКЦИИ ДЛЯ АДМИНКИ =====
-
 async def get_all_users():
     conn = await get_db()
-    users = await conn.fetch("SELECT user_id, username, first_name, balance FROM users ORDER BY user_id")
+    users = await conn.fetch("SELECT user_id, username, first_name, balance FROM users WHERE banned = 0")
     await conn.close()
     return users
+
+async def set_ban(user_id, ban_status):
+    conn = await get_db()
+    await conn.execute("UPDATE users SET banned = $1 WHERE user_id = $2", 1 if ban_status else 0, user_id)
+    await conn.close()
 
 async def is_banned(user_id):
     conn = await get_db()
     res = await conn.fetchval("SELECT banned FROM users WHERE user_id = $1", user_id)
     await conn.close()
     return res == 1
-
-async def set_ban(user_id, ban_status):
-    conn = await get_db()
-    await conn.execute("UPDATE users SET banned = $1 WHERE user_id = $2", 1 if ban_status else 0, user_id)
-    await conn.close()
 
 async def add_log(user_id, action, details=""):
     conn = await get_db()
@@ -129,13 +135,13 @@ async def get_logs(limit=20):
     await conn.close()
     return logs
 
-async def set_bonus_amount(new_amount):
-    conn = await get_db()
-    await conn.execute("UPDATE settings SET bonus_amount = $1 WHERE id = 1", new_amount)
-    await conn.close()
-
 async def get_bonus_amount():
     conn = await get_db()
     res = await conn.fetchval("SELECT bonus_amount FROM settings WHERE id = 1")
     await conn.close()
     return res or 2500
+
+async def set_bonus_amount(new_amount):
+    conn = await get_db()
+    await conn.execute("UPDATE settings SET bonus_amount = $1 WHERE id = 1", new_amount)
+    await conn.close()
