@@ -26,7 +26,6 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["📩 Заявки на верификацию"]
 ], resize_keyboard=True)
 
-# ===== ПРОВЕРКА ТЕХРАБОТ =====
 async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         if await get_maintenance_mode():
@@ -218,7 +217,7 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
     await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
     await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
 
-# ===== ВЕРИФИКАЦИЯ (без кнопок) =====
+# ===== ВЕРИФИКАЦИЯ (всё в одном месте) =====
 async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
     if await is_user_verified(user_id):
@@ -249,12 +248,18 @@ async def approve_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа!")
         return
+    
     args = context.args
     if not args:
-        await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
-        return
+        # Проверяем всё сообщение целиком, если args пустые
+        full_text = update.message.text
+        parts = full_text.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            args = [parts[1]]
+        else:
+            await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
+            return
     
-    # ЧИСТОЕ ЧИСЛО
     if not args[0].isdigit():
         await update.message.reply_text("❌ ID должен состоять только из цифр!")
         return
@@ -276,10 +281,16 @@ async def reject_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа!")
         return
+    
     args = context.args
     if not args:
-        await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
-        return
+        full_text = update.message.text
+        parts = full_text.split()
+        if len(parts) == 2 and parts[1].isdigit():
+            args = [parts[1]]
+        else:
+            await update.message.reply_text("❌ Укажи ID пользователя. Пример: /approve 8915047087")
+            return
     
     if not args[0].isdigit():
         await update.message.reply_text("❌ ID должен состоять только из цифр!")
@@ -553,16 +564,12 @@ async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
 
-    # Основные команды
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
     application.add_handler(CommandHandler("maintenance", maintenance_command))
-
-    # Команды верификации (работают глобально, в любом меню)
     application.add_handler(CommandHandler("approve", approve_command))
     application.add_handler(CommandHandler("reject", reject_command))
 
-    # Обработчики кнопок
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
