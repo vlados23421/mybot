@@ -87,7 +87,6 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
             f"{task['name']} - {status}",
             callback_data=f"do_{task['id']}"
         )])
-    # === ЭКСКЛЮЗИВНЫЕ ЗАДАНИЯ ДЛЯ ВЕРИФИЦИРОВАННЫХ ===
     if await is_user_verified(user_id):
         keyboard.append([InlineKeyboardButton("🔒 Эксклюзивное задание: +2000 COINS", callback_data="do_exclusive")])
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_tasks")])
@@ -135,7 +134,6 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not await is_user_verified(user_id):
             await query.edit_message_text("❌ Это задание только для верифицированных пользователей!")
             return
-        # Имитация эксклюзивного задания
         await add_balance(user_id, 2000)
         await add_log(user_id, "Выполнил эксклюзивное задание", "+2000 COINS")
         await query.edit_message_text("🎉 Эксклюзивное задание выполнено! +2000 COINS")
@@ -496,4 +494,58 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await add_log(user_id, "Разбанил", str(target_id))
                 await update.message.reply_text(f"✅ Пользователь {target_id} разбанен.")
             else:
-                await update.message
+                await update.message.reply_text("❌ Используй: ID ban или ID unban")
+        except:
+            await update.message.reply_text("❌ Ошибка! Используй: ID ban или ID unban")
+        context.user_data['ban_mode'] = False
+    elif context.user_data.get('bonus_mode') and user_id == ADMIN_ID:
+        try:
+            new_bonus = int(text)
+            await set_bonus_amount(new_bonus)
+            await add_log(user_id, "Изменил бонус", str(new_bonus))
+            await update.message.reply_text(f"✅ Бонус изменён на {new_bonus} COINS")
+        except:
+            await update.message.reply_text("❌ Введи число!")
+        context.user_data['bonus_mode'] = False
+    else:
+        await update.message.reply_text("⏳ В разработке")
+
+# ===== ВЕБ-СЕРВЕР ДЛЯ UPTIMEROBOT =====
+async def health_check(request):
+    return web.Response(text="OK")
+
+async def start_web_server():
+    app = web.Application()
+    app.router.add_get('/health', health_check)
+    runner = web.AppRunner(app)
+    await runner.setup()
+    port = int(os.environ.get('PORT', 8080))
+    site = web.TCPSite(runner, '0.0.0.0', port)
+    await site.start()
+    print(f"✅ Веб-сервер запущен на порту {port}")
+
+# ===== ЗАПУСК =====
+async def main():
+    await init_db()
+    application = Application.builder().token(TOKEN).build()
+    application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("adminka", adminka_command))
+    application.add_handler(CommandHandler("maintenance", maintenance_command))
+    application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks)"))
+    application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
+    application.add_handler(CallbackQueryHandler(admin_verify_handler, pattern="^(approve|reject)_"))
+    application.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
+    
+    print("🚀 CoinFlow с верификацией запущен!")
+    await application.initialize()
+    await application.start()
+    await application.updater.start_polling()
+    
+    await start_web_server()
+    
+    await asyncio.Event().wait()
+
+if __name__ == "__main__":
+    asyncio.run(main())
