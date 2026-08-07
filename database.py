@@ -1,19 +1,13 @@
-import os
 import asyncpg
-import asyncio
+import os
+from datetime import datetime, timedelta
 
-# ==========================================
-# ПОДКЛЮЧЕНИЕ К БАЗЕ (ВСТАВЬ СЮДА СВОЮ ССЫЛКУ)
-# ==========================================
-DATABASE_URL = "postgresql://coinflow_db_user:a28Y6JFsx5AkUDbX29U57WfhCN80qXqf@dpg-d9ota5id0e5s73cbi2g0-a/coinflow_db"
+DATABASE_URL = os.getenv("DATABASE_URL")  # Твой PostgreSQL URL
 
-# Создаём пул соединений (чтобы база не тормозила)
 async def get_db():
     return await asyncpg.connect(DATABASE_URL)
 
-# ==========================================
-# ИНИЦИАЛИЗАЦИЯ ТАБЛИЦ (Запускается один раз при старте)
-# ==========================================
+# ========== ИНИЦИАЛИЗАЦИЯ ==========
 async def init_db():
     conn = await get_db()
     await conn.execute('''
@@ -23,7 +17,9 @@ async def init_db():
             first_name TEXT,
             balance INTEGER DEFAULT 0,
             last_bonus TEXT,
-            reg_date TEXT
+            reg_date TEXT,
+            streak INTEGER DEFAULT 0,
+            last_streak_date TEXT
         )
     ''')
     await conn.execute('''
@@ -38,16 +34,24 @@ async def init_db():
             id SERIAL PRIMARY KEY,
             name TEXT,
             link TEXT,
+            channel_id TEXT,
             reward INTEGER,
             active INTEGER DEFAULT 1
         )
     ''')
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS payments (
+            id SERIAL PRIMARY KEY,
+            user_id BIGINT,
+            amount INTEGER,
+            stars INTEGER,
+            status TEXT,
+            date TEXT
+        )
+    ''')
     await conn.close()
-    print("✅ База данных PostgreSQL инициализирована!")
 
-# ==========================================
-# ФУНКЦИИ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ
-# ==========================================
+# ========== ПОЛЬЗОВАТЕЛИ ==========
 async def get_user(user_id):
     conn = await get_db()
     user = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
@@ -57,64 +61,63 @@ async def get_user(user_id):
 async def register_user(user_id, username, first_name):
     conn = await get_db()
     await conn.execute('''
-        INSERT INTO users (user_id, username, first_name, balance, reg_date)
-        VALUES ($1, $2, $3, 0, NOW())
+        INSERT INTO users (user_id, username, first_name, balance, reg_date, streak, last_streak_date)
+        VALUES ($1, $2, $3, 0, NOW(), 0, NOW())
         ON CONFLICT (user_id) DO NOTHING
     ''', user_id, username, first_name)
     await conn.close()
 
-async def update_bonus(user_id, today_date):
+async def add_balance(user_id, amount):
     conn = await get_db()
-    await conn.execute("UPDATE users SET last_bonus = $1, balance = balance + 2500 WHERE user_id = $2", today_date, user_id)
+    await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
     await conn.close()
 
-async def get_stats():
+async def get_balance(user_id):
     conn = await get_db()
-    total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-    total_coins = await conn.fetchval("SELECT SUM(balance) FROM users") or 0
+    res = await conn.fetchval("SELECT balance FROM users WHERE user_id = $1", user_id)
     await conn.close()
-    return total_users, total_coins
+    return res or 0
 
-# ==========================================
-# ФУНКЦИИ ДЛЯ ЗАДАНИЙ
-# ==========================================
-async def get_all_tasks(only_active=True):
+# ========== СТРИКИ ==========
+async def update_streak(user_id):
     conn = await get_db()
-    if only_active:
-        tasks = await conn.fetch("SELECT id, name, link, reward FROM tasks WHERE active = 1")
+    today = datetime.now().strftime("%Y-%m-%d")
+    row = await conn.fetchrow("SELECT streak, last_streak_date FROM users WHERE user_id = $1", user_id)
+    if not row:
+        await conn.close()
+        return 0
+    streak, last = row['streak'], row['last_streak_date']
+    if last == today:
+        await conn.close()
+        return streak
+    if (datetime.now() - datetime.strptime(last, "%Y-%m-%d")).days == 1:
+        streak += 1
     else:
-        tasks = await conn.fetch("SELECT id, name, link, reward FROM tasks")
+        streak = 1
+    await conn.execute("UPDATE users SET streak = $1, last_streak_date = $2 WHERE user_id = $3", streak, today, user_id)
+    await conn.close()
+    return streak
+
+# ========== ЗАДАНИЯ ==========
+async def get_active_tasks():
+    conn = await get_db()
+    tasks = await conn.fetch("SELECT id, name, link, channel_id, reward FROM tasks WHERE active = 1")
     await conn.close()
     return tasks
 
-async def get_task(task_id):
-    conn = await get_db()
-    task = await conn.fetchrow("SELECT id, name, link, reward FROM tasks WHERE id = $1", task_id)
-    await conn.close()
-    return task
-
-async def add_task(name, link, reward):
-    conn = await get_db()
-    await conn.execute("INSERT INTO tasks (name, link, reward) VALUES ($1, $2, $3)", name, link, reward)
-    await conn.close()
-
-async def delete_task(task_id):
-    conn = await get_db()
-    await conn.execute("DELETE FROM tasks WHERE id = $1", task_id)
-    await conn.close()
-
 async def is_task_done(user_id, task_id):
     conn = await get_db()
-    count = await conn.fetchval("SELECT COUNT(*) FROM completed_tasks WHERE user_id = $1 AND task_id = $2", user_id, task_id)
+    res = await conn.fetchval("SELECT COUNT(*) FROM completed_tasks WHERE user_id = $1 AND task_id = $2", user_id, task_id)
     await conn.close()
-    return count > 0
+    return res > 0
 
 async def mark_task_done(user_id, task_id):
     conn = await get_db()
     await conn.execute("INSERT INTO completed_tasks (user_id, task_id) VALUES ($1, $2)", user_id, task_id)
     await conn.close()
 
-async def add_balance(user_id, amount):
+# ========== ПЛАТЕЖИ ==========
+async def create_payment(user_id, amount, stars):
     conn = await get_db()
-    await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
+    await conn.execute("INSERT INTO payments (user_id, amount, stars, status, date) VALUES ($1, $2, $3, 'pending', NOW())", user_id, amount, stars)
     await conn.close()
