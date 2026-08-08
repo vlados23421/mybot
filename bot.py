@@ -12,9 +12,10 @@ TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 
 main_keyboard = ReplyKeyboardMarkup([
-    ["🤑 Заработать", "📊 Мой кабинет"],
-    ["📞 Поддержка", "💳 Пополнить"],
-    ["🔰 Верификация"]
+    ["📊 Статистика", "🤑 Заработать"],
+    ["💰 Баланс", "📤 Пригласить"],
+    ["📋 Инструкция", "📢 Рекламировать"],
+    ["📞 Поддержка"]
 ], resize_keyboard=True)
 
 admin_keyboard = ReplyKeyboardMarkup([
@@ -22,9 +23,31 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["⚖️ Изменить баланс", "📋 Активные задания"],
     ["📢 Рассылка", "⛔ Забанить / Разбанить"],
     ["📤 Экспорт в файл", "⚙️ Настроить бонус"],
-    ["📜 Журнал событий", "🔙 Выйти из админки"],
-    ["📩 Заявки на верификацию"]
+    ["📜 Журнал событий", "🔙 Выйти из админки"]
 ], resize_keyboard=True)
+
+# ===== ЖИВАЯ СТАТИСТИКА (считает из базы) =====
+async def get_task_counts():
+    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+    try:
+        channels = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'channel' AND active = 1")
+        groups = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'group' AND active = 1")
+        views = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'view' AND active = 1")
+        bots = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'bot' AND active = 1")
+        boosts = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'boost' AND active = 1")
+        reactions = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'reaction' AND active = 1")
+    except:
+        channels = groups = views = bots = boosts = reactions = 0
+    finally:
+        await conn.close()
+    return {
+        "channels": channels or 0,
+        "groups": groups or 0,
+        "views": views or 0,
+        "bots": bots or 0,
+        "boosts": boosts or 0,
+        "reactions": reactions or 0
+    }
 
 async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -48,29 +71,19 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     last_bonus = user_data['last_bonus'] if user_data else None
     bonus = await get_bonus_amount()
 
-    welcome_text = (
-        "🌟 **Добро пожаловать в CoinFlow!** 🌟\n\n"
-        "💰 **Твой личный путь к заработку COINS начинается здесь!**\n\n"
-        "✨ **Что тебя ждёт:**\n"
-        "🪙 Выполняй задания и получай монеты\n"
-        "⚡ Забирай ежедневный бонус\n"
-        "🔓 Открывай эксклюзивные возможности\n\n"
-        "🏆 **Начни прямо сейчас — нажми «Заработать»!**"
-    )
-
     if last_bonus != today:
         await add_balance(user.id, bonus)
         await conn.execute("UPDATE users SET last_bonus = $1 WHERE user_id = $2", today, user.id)
         await conn.close()
         balance = await get_balance(user.id)
         await update.message.reply_text(
-            f"🎁 **Ежедневный бонус получен!**\n➕ {bonus} COINS зачислено на баланс.\n\n{welcome_text}",
+            f"🎁 **Ежедневный бонус получен!**\n➕ {bonus} COINS зачислено на баланс.",
             parse_mode='Markdown',
             reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
         )
     else:
         await update.message.reply_text(
-            welcome_text,
+            f"🏰 Добро пожаловать в **CoinFlow**!\n💰 Твой баланс: {await get_balance(user.id)} COINS",
             parse_mode='Markdown',
             reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
         )
@@ -85,28 +98,93 @@ async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
+# ===== СТАТИСТИКА =====
+async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    counts = await get_task_counts()
+    text = (
+        f"📊 **Статистика CoinFlow**\n\n"
+        f"📢 Заданий на каналы: {counts['channels']}\n"
+        f"👥 Заданий на группы: {counts['groups']}\n"
+        f"👁️ Заданий на просмотр: {counts['views']}\n"
+        f"🤖 Заданий на боты: {counts['bots']}\n"
+        f"⚡ Заданий на бусты: {counts['boosts']}\n"
+        f"🔥 Заданий на реакции: {counts['reactions']}\n\n"
+        f"👑 Выберите способ заработка 👇"
+    )
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+# ===== ИНСТРУКЦИЯ =====
+async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    text = (
+        "📋 **Инструкция по использованию CoinFlow**\n\n"
+        "💰 **Как зарабатывать COINS:**\n"
+        "1️⃣ Нажми кнопку **«🤑 Заработать»**.\n"
+        "2️⃣ Выбери тип задания (канал, группа, просмотр и т.д.).\n"
+        "3️⃣ Нажми на задание и выполни условие (подпишись, вступи, поставь реакцию).\n"
+        "4️⃣ Нажми **«✅ Проверить»** — бот автоматически проверит выполнение и начислит COINS.\n\n"
+        "📌 **Важно:** Использование ботов и скриптов запрещено. Нарушение ведёт к блокировке."
+    )
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+# ===== ЗАРАБОТАТЬ =====
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update, context):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Подписаться на канал", callback_data="tasks_channels")],
+        [InlineKeyboardButton("👥 Вступить в группу", callback_data="tasks_groups")],
+        [InlineKeyboardButton("👁️ Просмотр постов", callback_data="tasks_views")],
+        [InlineKeyboardButton("🤖 Перейти в бота", callback_data="tasks_bots")],
+        [InlineKeyboardButton("⚡ Премиум буст (заряды)", callback_data="tasks_boosts")],
+        [InlineKeyboardButton("🔥 Поставить реакции", callback_data="tasks_reactions")],
+        [InlineKeyboardButton("🔙 В меню", callback_data="back_main")]
+    ])
+    await update.message.reply_text(
+        "🤑 **Выберите способ заработка 👇**",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
+async def task_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data == "back_main":
+        await start(update, context)
         return
-    user_id = update.effective_user.id
-    tasks = await get_active_tasks()
+    
+    task_type_map = {
+        "tasks_channels": "channel",
+        "tasks_groups": "group",
+        "tasks_views": "view",
+        "tasks_bots": "bot",
+        "tasks_boosts": "boost",
+        "tasks_reactions": "reaction"
+    }
+    task_type = task_type_map.get(data)
+    
+    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+    tasks = await conn.fetch("SELECT id, name, link, reward FROM tasks WHERE type = $1 AND active = 1", task_type)
+    await conn.close()
+    
     if not tasks:
-        await update.message.reply_text("📭 Сейчас нет заданий.")
+        await query.edit_message_text(
+            f"📭 В этой категории пока нет заданий.\n\nЗайди позже! 🚀",
+            parse_mode='Markdown'
+        )
         return
+    
     keyboard = []
     for task in tasks:
-        done = await is_task_done(user_id, task['id'])
-        status = "✅ Выполнено" if done else f"🔹 {task['reward']} COINS"
         keyboard.append([InlineKeyboardButton(
-            f"{task['name']} - {status}",
+            f"🔹 {task['name']} ({task['reward']} COINS)",
             callback_data=f"do_{task['id']}"
         )])
-    if await is_user_verified(user_id):
-        keyboard.append([InlineKeyboardButton("🔒 Эксклюзивное задание: +2000 COINS", callback_data="do_exclusive")])
-    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_tasks")])
-    await update.message.reply_text(
-        "🤑 Доступные задания:",
-        reply_markup=InlineKeyboardMarkup(keyboard)
+    keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_main")])
+    
+    await query.edit_message_text(
+        "🤑 **Доступные задания:**",
+        reply_markup=InlineKeyboardMarkup(keyboard),
+        parse_mode='Markdown'
     )
 
 async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -114,19 +192,23 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await query.answer()
     data = query.data
     user_id = update.effective_user.id
-    if data == "back_tasks":
+    
+    if data == "back_main":
         await start(update, context)
         return
+    
     if data.startswith("do_"):
         task_id = int(data.replace("do_", ""))
         if await is_task_done(user_id, task_id):
             await query.edit_message_text("✅ Уже выполнено!")
             return
+        
         tasks = await get_active_tasks()
         task = next((t for t in tasks if t['id'] == task_id), None)
         if not task:
             await query.edit_message_text("❌ Задание не найдено")
             return
+        
         try:
             chat_member = await context.bot.get_chat_member(chat_id=task['channel_id'], user_id=user_id)
             if chat_member.status in ['member', 'administrator', 'creator']:
@@ -144,178 +226,120 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except Exception as e:
             await query.edit_message_text("❌ Ошибка проверки. Убедись, что канал публичный.")
             return
-    if data == "do_exclusive":
-        if not await is_user_verified(user_id):
-            await query.edit_message_text("❌ Это задание только для верифицированных пользователей!")
-            return
-        await add_balance(user_id, 2000)
-        await add_log(user_id, "Выполнил эксклюзивное задание", "+2000 COINS")
-        await query.edit_message_text("🎉 Эксклюзивное задание выполнено! +2000 COINS")
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update, context):
-        return
     await update.message.reply_text(
-        "📞 Поддержка:\nНапиши администратору в ЛС: @ArchibaldNn",
-        reply_markup=ReplyKeyboardMarkup([["🔙 В меню"]], resize_keyboard=True)
+        "📞 **Поддержка CoinFlow**\n\n"
+        "Если у тебя есть вопросы, проблемы или предложения, свяжись с администратором:\n"
+        "👑 **@ArchibaldNn**\n\n"
+        "💬 Также ты можешь зайти в наш чат:\n"
+        "👉 @PrsAdvertisementMy",
+        parse_mode='Markdown'
     )
-    context.user_data['support_mode'] = True
 
-async def support_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('support_mode') and update.effective_user.id != ADMIN_ID:
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"📩 Сообщение в поддержку от {update.effective_user.id}:\n\n{update.message.text}"
-        )
-        await update.message.reply_text("✅ Сообщение отправлено!")
-        context.user_data['support_mode'] = False
-        await start(update, context)
-
-async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update, context):
-        return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_50")],
-        [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_150")],
-        [InlineKeyboardButton("3000 COINS - 300 ⭐", callback_data="buy_300")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_buy")]
-    ])
-    await update.message.reply_text("💳 Пополни баланс COINS за Telegram Stars:", reply_markup=keyboard)
-
-async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if query.data == "back_buy":
-        await start(update, context)
-        return
-    if query.data.startswith("buy_"):
-        stars = int(query.data.replace("buy_", ""))
-        amount_map = {50: 500, 150: 1500, 300: 3000}
-        if stars not in amount_map:
-            await query.edit_message_text("❌ Неверная сумма!")
-            return
-        amount = amount_map[stars]
-        try:
-            await context.bot.send_invoice(
-                chat_id=update.effective_user.id,
-                title="Пополнение COINS",
-                description=f"{amount} COINS на баланс",
-                payload=f"coins_{amount}",
-                currency="XTR",
-                prices=[{"label": f"{amount} COINS", "amount": stars}]
-            )
-        except Exception as e:
-            await query.edit_message_text(f"❌ Ошибка отправки счета: {e}")
-
-async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=True)
-
-async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    payload = update.message.successful_payment.invoice_payload
-    amount = int(payload.replace("coins_", ""))
-    await add_balance(update.effective_user.id, amount)
-    await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
-    await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
-
-async def verify_user(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user_id = update.effective_user.id
-    if await is_user_verified(user_id):
-        await update.message.reply_text("✅ Вы уже верифицированы!")
-        return
+    ref_link = f"https://t.me/{context.bot.username}?start=ref_{user_id}"
     await update.message.reply_text(
-        "🔰 **Подача заявки на верификацию**\n\nРасскажи кратко о себе и почему хочешь получить статус:\n(Отправь одним сообщением)"
+        f"📤 **Пригласи друга и получи бонус!**\n\n"
+        f"Твоя уникальная ссылка:\n`{ref_link}`\n\n"
+        f"🔥 Если кто-то перейдёт по твоей ссылке и зарегистрируется, **оба получат +500 COINS**!",
+        parse_mode='Markdown'
     )
-    context.user_data['verify_mode'] = True
 
-async def handle_verify_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('verify_mode'):
-        text = update.message.text
-        user_id = update.effective_user.id
-        username = update.effective_user.username or "Нет username"
-        await create_verify_request(user_id, username, text)
-        await context.bot.send_message(
-            ADMIN_ID,
-            f"📩 **Новая заявка на верификацию**\n\n"
-            f"От: @{username}\nID: `{user_id}`\n\n**Причина:**\n{text}"
-        )
-        await update.message.reply_text("✅ Заявка отправлена админу! Ожидай решения.")
-        context.user_data['verify_mode'] = False
+# ===== РЕКЛАМИРОВАТЬ =====
+async def advertise_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Канал", callback_data="adv_channel")],
+        [InlineKeyboardButton("👥 Группу", callback_data="adv_group")],
+        [InlineKeyboardButton("👁️ Пост", callback_data="adv_post")],
+        [InlineKeyboardButton("🤖 Бот", callback_data="adv_bot")],
+        [InlineKeyboardButton("⚡ Премиум буст (заряды)", callback_data="adv_boost")],
+        [InlineKeyboardButton("🔥 Реакции", callback_data="adv_reaction")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="adv_back")]
+    ])
+    await update.message.reply_text(
+        f"📢 **Что вы хотите рекламировать?**\n\n💰 Баланс: {await get_balance(update.effective_user.id)} COINS",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
 
-async def admin_requests(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    requests = await get_pending_requests()
-    if not requests:
-        await update.message.reply_text("📭 Нет ожидающих заявок.")
-        return
-    
-    for req in requests:
-        keyboard = InlineKeyboardMarkup([
-            [InlineKeyboardButton("✅ Одобрить", callback_data=f"approve_req_{req['id']}")],
-            [InlineKeyboardButton("❌ Отклонить", callback_data=f"reject_req_{req['id']}")]
-        ])
-        await update.message.reply_text(
-            f"ID: {req['id']} | @{req['username']}\n{req['reason'][:100]}...",
-            reply_markup=keyboard
-        )
-
-async def admin_verify_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def advertise_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
     
-    if data.startswith("approve_req_"):
-        req_id = int(data.replace("approve_req_", ""))
-        user_id = await approve_request(req_id)
-        if user_id:
-            await query.edit_message_text(f"✅ Заявка одобрена! Пользователь {user_id} верифицирован.")
-            await context.bot.send_message(
-                user_id,
-                "🎉 Поздравляем! Вы прошли верификацию!\n\n✅ Вам начислен бонус +1000 COINS"
+    if data == "adv_back":
+        await start(update, context)
+        return
+    
+    type_map = {
+        "adv_channel": "channel",
+        "adv_group": "group",
+        "adv_post": "view",
+        "adv_bot": "bot",
+        "adv_boost": "boost",
+        "adv_reaction": "reaction"
+    }
+    adv_type = type_map.get(data, "channel")
+    context.user_data['adv_type'] = adv_type
+    
+    await query.edit_message_text(
+        f"📢 **Выберите канал для рекламы**\n\n"
+        f"1️⃣ Перешлите любое сообщение из канала в этот чат.\n"
+        f"2️⃣ Убедитесь, что бот добавлен в этот канал.\n"
+        f"3️⃣ Я автоматически создам задание для пользователей!\n\n"
+        f"📌 *Если бот не добавлен — добавьте его и повторите.*",
+        parse_mode='Markdown'
+    )
+    context.user_data['advertise_mode'] = True
+
+async def handle_advertise_request(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('advertise_mode'):
+        forwarded_msg = update.message.forward_from_chat
+        
+        if not forwarded_msg:
+            await update.message.reply_text(
+                "❌ Пожалуйста, **перешлите** сообщение из канала, который хотите рекламировать."
             )
-            await add_balance(user_id, 1000)
-        else:
-            await query.edit_message_text("❌ Ошибка: заявка не найдена.")
-            
-    elif data.startswith("reject_req_"):
-        req_id = int(data.replace("reject_req_", ""))
-        user_id = await reject_request(req_id)
-        if user_id:
-            await query.edit_message_text(f"❌ Заявка отклонена.")
-            await context.bot.send_message(user_id, "😔 Ваша заявка на верификацию была отклонена.")
-        else:
-            await query.edit_message_text("❌ Ошибка: заявка не найдена.")
-
-async def maintenance_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Только для админа!")
-        return
-    args = context.args
-    if not args:
-        current = await get_maintenance_mode()
-        status = "ВКЛЮЧЕН" if current else "ВЫКЛЮЧЕН"
-        await update.message.reply_text(
-            f"⚙️ Режим техработ: {status}\n\n"
-            f"Используй:\n/maintenance on - включить\n/maintenance off - выключить\n/maintenance message Текст - сменить сообщение"
+            return
+        
+        chat_id = forwarded_msg.id
+        chat_title = forwarded_msg.title or "Канал"
+        
+        try:
+            chat_member = await context.bot.get_chat_member(chat_id, context.bot.id)
+            if chat_member.status not in ['member', 'administrator', 'creator']:
+                await update.message.reply_text(
+                    f"❌ Бот не добавлен в канал **{chat_title}**.\n\n"
+                    f"Добавьте бота в канал, затем перешлите сообщение ещё раз."
+                )
+                return
+        except:
+            await update.message.reply_text("❌ Не удалось проверить канал. Убедитесь, что бот добавлен.")
+            return
+        
+        adv_type = context.user_data.get('adv_type', 'channel')
+        reward = 200
+        
+        conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+        await conn.execute(
+            "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
+            f"Подпишись на {chat_title}", f"https://t.me/{chat_title}", chat_id, adv_type, reward
         )
-        return
-    action = args[0].lower()
-    if action == "on":
-        await set_maintenance_mode(True)
-        await update.message.reply_text("✅ Режим техработ ВКЛЮЧЁН.")
-        await add_log(update.effective_user.id, "Включил техработы")
-    elif action == "off":
-        await set_maintenance_mode(False)
-        await update.message.reply_text("✅ Режим техработ ВЫКЛЮЧЕН.")
-        await add_log(update.effective_user.id, "Выключил техработы")
-    elif action == "message" and len(args) > 1:
-        new_msg = " ".join(args[1:])
-        await set_maintenance_mode(True, new_msg)
-        await update.message.reply_text(f"✅ Сообщение техработ обновлено:\n\n{new_msg}")
-        await add_log(update.effective_user.id, "Изменил сообщение техработ", new_msg)
-    else:
-        await update.message.reply_text("❌ Неизвестная команда. Используй on, off или message.")
+        await conn.close()
+        
+        await update.message.reply_text(
+            f"✅ **Задание создано!**\n\n"
+            f"📢 Канал: {chat_title}\n"
+            f"💰 Награда: {reward} COINS\n"
+            f"📋 Тип: {adv_type}\n\n"
+            f"Пользователи могут выполнить это задание в разделе «Заработать»."
+        )
+        context.user_data['advertise_mode'] = False
+        context.user_data['adv_type'] = None
 
+# ===== АДМИНКА =====
 async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет доступа")
@@ -354,14 +378,73 @@ async def admin_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    tasks = await get_active_tasks()
-    if not tasks:
-        await update.message.reply_text("📭 Нет активных заданий.")
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("📢 Канал", callback_data="add_type_channel")],
+        [InlineKeyboardButton("👥 Группа", callback_data="add_type_group")],
+        [InlineKeyboardButton("👁️ Просмотр", callback_data="add_type_view")],
+        [InlineKeyboardButton("🤖 Бот", callback_data="add_type_bot")],
+        [InlineKeyboardButton("⚡ Буст", callback_data="add_type_boost")],
+        [InlineKeyboardButton("🔥 Реакция", callback_data="add_type_reaction")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
+    ])
+    await update.message.reply_text(
+        "📝 **Выбери тип задания:**",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
+async def admin_add_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if update.effective_user.id != ADMIN_ID:
         return
-    text = "📋 Активные задания:\n\n"
-    for t in tasks:
-        text += f"ID {t['id']}: {t['name']} | {t['reward']} COINS\n"
-    await update.message.reply_text(text)
+    data = query.data
+    
+    if data == "admin_back":
+        await admin_panel(update, context)
+        return
+    
+    if data.startswith("add_type_"):
+        task_type = data.replace("add_type_", "")
+        context.user_data['adding_task_type'] = task_type
+        await query.edit_message_text(
+            f"📝 **Добавление задания**\n\n"
+            f"Тип: `{task_type}`\n\n"
+            f"Введи данные в формате:\n"
+            f"`Название | Ссылка | Награда`\n\n"
+            f"Пример:\n"
+            f"`Мой канал | https://t.me/MyChannel | 500`",
+            parse_mode='Markdown'
+        )
+        context.user_data['task_add_mode'] = True
+
+async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('task_add_mode') and update.effective_user.id == ADMIN_ID:
+        text = update.message.text
+        parts = text.split("|")
+        if len(parts) != 3:
+            await update.message.reply_text("❌ Неверный формат! Используй: Название | Ссылка | Награда")
+            return
+        name = parts[0].strip()
+        link = parts[1].strip()
+        try:
+            reward = int(parts[2].strip())
+        except:
+            await update.message.reply_text("❌ Награда должна быть числом!")
+            return
+        
+        task_type = context.user_data.get('adding_task_type', 'channel')
+        conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
+        await conn.execute(
+            "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
+            name, link, link, task_type, reward
+        )
+        await conn.close()
+        
+        context.user_data['task_add_mode'] = False
+        context.user_data['adding_task_type'] = None
+        
+        await update.message.reply_text(f"✅ Задание '{name}' добавлено! Тип: {task_type}")
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -375,29 +458,11 @@ async def admin_ban(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⛔ Введи ID пользователя для бана / разбана:\nИспользуй формат: ID ban или ID unban\nПример: 123456789 ban")
     context.user_data['ban_mode'] = True
 
-async def admin_export(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    users = await get_all_users()
-    text = "📤 Экспорт пользователей:\n\n"
-    for u in users:
-        text += f"{u['user_id']},{u['username']},{u['first_name']},{u['balance']}\n"
-    await update.message.reply_text(text)
-
 async def admin_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
     await update.message.reply_text("⚙️ Введи новую сумму ежедневного бонуса:\n(Например: 3000)")
     context.user_data['bonus_mode'] = True
-
-async def admin_logs(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    logs = await get_logs(20)
-    text = "📜 Последние 20 событий:\n\n"
-    for l in logs:
-        text += f"{l['time'][:19]} | {l['user_id']} | {l['action']} {l['details']}\n"
-    await update.message.reply_text(text)
 
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
@@ -405,22 +470,20 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    if text == "📊 Мой кабинет":
-        await my_cabinet(update, context)
+    if text == "📊 Статистика":
+        await bot_stats(update, context)
     elif text == "🤑 Заработать":
         await earn(update, context)
+    elif text == "💰 Баланс":
+        await my_cabinet(update, context)
+    elif text == "📤 Пригласить":
+        await invite(update, context)
+    elif text == "📋 Инструкция":
+        await instructions(update, context)
+    elif text == "📢 Рекламировать":
+        await advertise_menu(update, context)
     elif text == "📞 Поддержка":
         await support(update, context)
-    elif text == "💳 Пополнить":
-        await buy_coins(update, context)
-    elif text == "🔰 Верификация":
-        await verify_user(update, context)
-    elif text == "📩 Заявки на верификацию" and user_id == ADMIN_ID:
-        await admin_requests(update, context)
-    elif context.user_data.get('verify_mode'):
-        await handle_verify_request(update, context)
-    elif context.user_data.get('support_mode') and user_id != ADMIN_ID:
-        await support_message(update, context)
     elif user_id == ADMIN_ID:
         if text == "📊 Статистика":
             await admin_stats(update, context)
@@ -434,23 +497,24 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await admin_broadcast(update, context)
         elif text == "⛔ Забанить / Разбанить":
             await admin_ban(update, context)
-        elif text == "📤 Экспорт в файл":
-            await admin_export(update, context)
         elif text == "⚙️ Настроить бонус":
             await admin_bonus(update, context)
-        elif text == "📜 Журнал событий":
-            await admin_logs(update, context)
         elif text == "🔙 Выйти из админки":
             await update.message.reply_text("👋 Выход из админки.", reply_markup=main_keyboard)
         else:
-            await update.message.reply_text("⏳ Неизвестная команда.")
+            await update.message.reply_text("⏳ В разработке")
+    elif context.user_data.get('task_add_mode') and user_id == ADMIN_ID:
+        await handle_admin_task_input(update, context)
+        return
+    elif context.user_data.get('advertise_mode'):
+        await handle_advertise_request(update, context)
+        return
     elif context.user_data.get('balance_mode') and user_id == ADMIN_ID:
         try:
             parts = text.split()
             target_id = int(parts[0])
             amount = int(parts[1])
             await add_balance(target_id, amount)
-            await add_log(user_id, "Изменил баланс", f"{target_id}: {amount}")
             await update.message.reply_text(f"✅ Баланс {target_id} изменён на {amount}")
         except:
             await update.message.reply_text("❌ Ошибка! Используй: ID Сумма")
@@ -464,7 +528,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 sent += 1
             except:
                 pass
-        await add_log(user_id, "Сделал рассылку", f"{sent} пользователей")
         await update.message.reply_text(f"✅ Рассылка отправлена! {sent} человек.")
         context.user_data['broadcast_mode'] = False
     elif context.user_data.get('ban_mode') and user_id == ADMIN_ID:
@@ -474,11 +537,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             action = parts[1].lower()
             if action == "ban":
                 await set_ban(target_id, True)
-                await add_log(user_id, "Забанил", str(target_id))
                 await update.message.reply_text(f"⛔ Пользователь {target_id} забанен.")
             elif action == "unban":
                 await set_ban(target_id, False)
-                await add_log(user_id, "Разбанил", str(target_id))
                 await update.message.reply_text(f"✅ Пользователь {target_id} разбанен.")
             else:
                 await update.message.reply_text("❌ Используй: ID ban или ID unban")
@@ -489,7 +550,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         try:
             new_bonus = int(text)
             await set_bonus_amount(new_bonus)
-            await add_log(user_id, "Изменил бонус", str(new_bonus))
             await update.message.reply_text(f"✅ Бонус изменён на {new_bonus} COINS")
         except:
             await update.message.reply_text("❌ Введи число!")
@@ -516,16 +576,16 @@ async def main():
 
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
-    application.add_handler(CommandHandler("maintenance", maintenance_command))
 
-    application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_tasks|do_exclusive)"))
-    application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
-    application.add_handler(CallbackQueryHandler(admin_verify_handler, pattern="^(approve_req_|reject_req_)"))
+    application.add_handler(CallbackQueryHandler(task_category_handler, pattern="^(tasks_|back_main)"))
+    application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_main)"))
+    application.add_handler(CallbackQueryHandler(admin_add_task_callback, pattern="^(add_type_|admin_back)"))
+    application.add_handler(CallbackQueryHandler(advertise_handler, pattern="^(adv_|back_)"))
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow с новой админ-кнопкой запущен!")
+    print("🚀 CoinFlow с функцией рекламы запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
