@@ -4,7 +4,7 @@ import asyncpg
 from datetime import datetime
 from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler, ContextTypes
 
 from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount, get_maintenance_mode, set_maintenance_mode, get_maintenance_message, create_verify_request, get_pending_requests, approve_request, reject_request, is_user_verified, get_user_requests
 
@@ -14,8 +14,8 @@ ADMIN_ID = int(os.getenv("ADMIN_ID"))
 main_keyboard = ReplyKeyboardMarkup([
     ["📊 Статистика", "🤑 Заработать"],
     ["💰 Баланс", "📤 Пригласить"],
-    ["📋 Инструкция", "📢 Рекламировать"],
-    ["📞 Поддержка"]
+    ["📋 Инструкция", "💳 Пополнить"],
+    ["📢 Рекламировать", "📞 Поддержка"]
 ], resize_keyboard=True)
 
 admin_keyboard = ReplyKeyboardMarkup([
@@ -52,7 +52,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = user.username or "Нет username"
     first_name = user.first_name or "Пользователь"
 
-    # Реферальная система
     args = context.args
     referrer_id = None
     is_referral = False
@@ -395,6 +394,53 @@ async def admin_bonus(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⚙️ Введи новую сумму ежедневного бонуса:\n(Например: 3000)")
     context.user_data['bonus_mode'] = True
 
+# ===== ПОКУПКА COINS (TELEGRAM STARS) =====
+async def buy_coins(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("500 COINS - 50 ⭐", callback_data="buy_50")],
+        [InlineKeyboardButton("1500 COINS - 150 ⭐", callback_data="buy_150")],
+        [InlineKeyboardButton("3000 COINS - 300 ⭐", callback_data="buy_300")],
+        [InlineKeyboardButton("🔙 Назад", callback_data="back_buy")]
+    ])
+    await update.message.reply_text("💳 Пополни баланс COINS за Telegram Stars:", reply_markup=keyboard)
+
+async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    if query.data == "back_buy":
+        await start(update, context)
+        return
+    if query.data.startswith("buy_"):
+        stars = int(query.data.replace("buy_", ""))
+        amount_map = {50: 500, 150: 1500, 300: 3000}
+        if stars not in amount_map:
+            await query.edit_message_text("❌ Неверная сумма!")
+            return
+        amount = amount_map[stars]
+        try:
+            await context.bot.send_invoice(
+                chat_id=update.effective_user.id,
+                title="Пополнение COINS",
+                description=f"{amount} COINS на баланс",
+                payload=f"coins_{amount}",
+                currency="XTR",
+                prices=[{"label": f"{amount} COINS", "amount": stars}]
+            )
+        except Exception as e:
+            await query.edit_message_text(f"❌ Ошибка отправки счета: {e}")
+
+async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.pre_checkout_query.answer(ok=True)
+
+async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    payload = update.message.successful_payment.invoice_payload
+    amount = int(payload.replace("coins_", ""))
+    await add_balance(update.effective_user.id, amount)
+    await add_log(update.effective_user.id, "Купил COINS", f"+{amount}")
+    await update.message.reply_text(f"✅ Пополнение успешно! +{amount} COINS")
+
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
         return
@@ -416,6 +462,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
     if text == "📋 Инструкция":
         await instructions(update, context)
+        return
+    if text == "💳 Пополнить":
+        await buy_coins(update, context)
         return
     if text == "📢 Рекламировать":
         await advertise_menu(update, context)
@@ -531,11 +580,14 @@ async def main():
     application.add_handler(CommandHandler("adminka", adminka_command))
 
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_main)"))
+    application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|back_buy)"))
     application.add_handler(CallbackQueryHandler(advertise_handler, pattern="^(adv_|back_)"))
 
+    application.add_handler(PreCheckoutQueryHandler(pre_checkout))
+    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow (финальная упрощённая версия) запущен!")
+    print("🚀 CoinFlow с пополнением баланса запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
