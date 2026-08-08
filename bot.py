@@ -49,11 +49,10 @@ async def get_task_counts():
     }
 
 async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        if await get_maintenance_mode():
-            msg = await get_maintenance_message()
-            await update.message.reply_text(msg)
-            return True
+    if await get_maintenance_mode():
+        msg = await get_maintenance_message()
+        await update.message.reply_text(msg)
+        return True
     return False
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -65,7 +64,6 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     username = user.username or "Нет username"
     first_name = user.first_name or "Пользователь"
 
-    # ===== РЕФЕРАЛЬНАЯ СИСТЕМА =====
     args = context.args
     referrer_id = None
     is_referral = False
@@ -77,20 +75,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             pass
 
-    # Регистрируем пользователя (если ещё не зарегистрирован)
     await register_user(user_id, username, first_name)
 
-    # Если это переход по ссылке и пригласивший существует
     if is_referral and referrer_id and referrer_id != user_id:
-        # Проверяем, не забанен ли пригласивший
         if not await is_banned(referrer_id):
-            # Начисляем бонус пригласившему (+500)
             await add_balance(referrer_id, 500)
             await add_log(referrer_id, "Получил реферальный бонус", f"За пользователя {user_id}")
-            # Начисляем бонус новому пользователю (+500)
             await add_balance(user_id, 500)
             await add_log(user_id, "Получил реферальный бонус", f"От {referrer_id}")
-            # Уведомляем пригласившего (если бот может написать ему)
             try:
                 await context.bot.send_message(
                     referrer_id,
@@ -104,12 +96,10 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 f"Тебе и пригласившему начислено по +500 COINS!"
             )
 
-    # Проверка на бан
     if await is_banned(user_id):
         await update.message.reply_text("⛔ Вы заблокированы.")
         return
 
-    # Ежедневный бонус
     conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
     today = datetime.now().strftime("%Y-%m-%d")
     user_data = await get_user(user_id)
@@ -170,6 +160,8 @@ async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(text, parse_mode='Markdown')
 
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Подписаться на канал", callback_data="tasks_channels")],
         [InlineKeyboardButton("👥 Вступить в группу", callback_data="tasks_groups")],
@@ -186,6 +178,8 @@ async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def task_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -230,6 +224,8 @@ async def task_category_handler(update: Update, context: ContextTypes.DEFAULT_TY
     )
 
 async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -270,6 +266,8 @@ async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
 
 async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     await update.message.reply_text(
         "📞 **Поддержка CoinFlow**\n\n"
         "Если у тебя есть вопросы, проблемы или предложения, свяжись с администратором:\n"
@@ -280,6 +278,8 @@ async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
 
 async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if await check_maintenance(update, context):
+        return
     user_id = update.effective_user.id
     ref_link = f"https://t.me/{context.bot.username}?start=ref_{user_id}"
     await update.message.reply_text(
@@ -486,6 +486,7 @@ async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_
         
         await update.message.reply_text(f"✅ Задание '{name}' добавлено! Тип: {task_type}")
         return
+
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -512,44 +513,61 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
     if text == "📊 Статистика":
         await bot_stats(update, context)
-    elif text == "🤑 Заработать":
+        return
+    if text == "🤑 Заработать":
         await earn(update, context)
-    elif text == "💰 Баланс":
+        return
+    if text == "💰 Баланс":
         await my_cabinet(update, context)
-    elif text == "📤 Пригласить":
+        return
+    if text == "📤 Пригласить":
         await invite(update, context)
-    elif text == "📋 Инструкция":
+        return
+    if text == "📋 Инструкция":
         await instructions(update, context)
-    elif text == "📢 Рекламировать":
+        return
+    if text == "📢 Рекламировать":
         await advertise_menu(update, context)
-    elif text == "📞 Поддержка":
+        return
+    if text == "📞 Поддержка":
         await support(update, context)
-    elif user_id == ADMIN_ID:
+        return
+
+    if user_id == ADMIN_ID:
         if text == "📊 Статистика":
             await admin_stats(update, context)
-        elif text == "📋 Список пользователей":
+            return
+        if text == "📋 Список пользователей":
             await admin_users(update, context)
-        elif text == "⚖️ Изменить баланс":
+            return
+        if text == "⚖️ Изменить баланс":
             await admin_balance(update, context)
-        elif text == "📋 Активные задания":
+            return
+        if text == "📋 Активные задания":
             await admin_tasks(update, context)
-        elif text == "📢 Рассылка":
+            return
+        if text == "📢 Рассылка":
             await admin_broadcast(update, context)
-        elif text == "⛔ Забанить / Разбанить":
+            return
+        if text == "⛔ Забанить / Разбанить":
             await admin_ban(update, context)
-        elif text == "⚙️ Настроить бонус":
+            return
+        if text == "⚙️ Настроить бонус":
             await admin_bonus(update, context)
-        elif text == "🔙 Выйти из админки":
+            return
+        if text == "🔙 Выйти из админки":
             await update.message.reply_text("👋 Выход из админки.", reply_markup=main_keyboard)
-        else:
-            await update.message.reply_text("⏳ В разработке")
-    elif context.user_data.get('task_add_mode') and user_id == ADMIN_ID:
+            return
+        await update.message.reply_text("⏳ В разработке")
+        return
+
+    if context.user_data.get('task_add_mode') and user_id == ADMIN_ID:
         await handle_admin_task_input(update, context)
         return
-    elif context.user_data.get('advertise_mode'):
+    if context.user_data.get('advertise_mode'):
         await handle_advertise_request(update, context)
         return
-    elif context.user_data.get('balance_mode') and user_id == ADMIN_ID:
+    if context.user_data.get('balance_mode') and user_id == ADMIN_ID:
         try:
             parts = text.split()
             target_id = int(parts[0])
@@ -559,7 +577,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❌ Ошибка! Используй: ID Сумма")
         context.user_data['balance_mode'] = False
-    elif context.user_data.get('broadcast_mode') and user_id == ADMIN_ID:
+        return
+    if context.user_data.get('broadcast_mode') and user_id == ADMIN_ID:
         users = await get_all_users()
         sent = 0
         for u in users:
@@ -570,7 +589,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 pass
         await update.message.reply_text(f"✅ Рассылка отправлена! {sent} человек.")
         context.user_data['broadcast_mode'] = False
-    elif context.user_data.get('ban_mode') and user_id == ADMIN_ID:
+        return
+    if context.user_data.get('ban_mode') and user_id == ADMIN_ID:
         try:
             parts = text.split()
             target_id = int(parts[0])
@@ -586,7 +606,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❌ Ошибка! Используй: ID ban или ID unban")
         context.user_data['ban_mode'] = False
-    elif context.user_data.get('bonus_mode') and user_id == ADMIN_ID:
+        return
+    if context.user_data.get('bonus_mode') and user_id == ADMIN_ID:
         try:
             new_bonus = int(text)
             await set_bonus_amount(new_bonus)
@@ -594,8 +615,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         except:
             await update.message.reply_text("❌ Введи число!")
         context.user_data['bonus_mode'] = False
-    else:
-        await update.message.reply_text("⏳ В разработке")
+        return
+
+    await update.message.reply_text("⏳ В разработке")
 
 async def health_check(request):
     return web.Response(text="OK")
@@ -624,7 +646,7 @@ async def main():
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow с реферальной системой запущен!")
+    print("🚀 CoinFlow полностью исправлен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
