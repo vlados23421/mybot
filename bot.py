@@ -363,6 +363,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
+    # === ОБРАБОТКА КНОПОК ПОЛЬЗОВАТЕЛЯ ===
     if text == "📊 Статистика":
         await bot_stats(update, context)
         return
@@ -385,6 +386,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await support(update, context)
         return
 
+    # === ОБРАБОТКА АДМИНСКИХ КНОПОК ===
     if user_id == ADMIN_ID:
         if text == "📊 Статистика":
             await admin_stats(update, context)
@@ -411,6 +413,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("👋 Выход из админки.", reply_markup=main_keyboard)
             return
 
+    # === АДМИНСКИЕ РЕЖИМЫ ВВОДА ===
     if context.user_data.get('task_add_mode') and user_id == ADMIN_ID:
         await handle_admin_task_input(update, context)
         return
