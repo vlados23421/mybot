@@ -26,7 +26,6 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["📜 Журнал событий", "🔙 Выйти из админки"]
 ], resize_keyboard=True)
 
-# ===== ЖИВАЯ СТАТИСТИКА =====
 async def get_task_counts():
     conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
     try:
@@ -60,32 +59,78 @@ async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
         return
+
     user = update.effective_user
-    await register_user(user.id, user.username, user.first_name)
-    if await is_banned(user.id):
+    user_id = user.id
+    username = user.username or "Нет username"
+    first_name = user.first_name or "Пользователь"
+
+    # ===== РЕФЕРАЛЬНАЯ СИСТЕМА =====
+    args = context.args
+    referrer_id = None
+    is_referral = False
+
+    if args and args[0].startswith("ref_"):
+        try:
+            referrer_id = int(args[0].replace("ref_", ""))
+            is_referral = True
+        except:
+            pass
+
+    # Регистрируем пользователя (если ещё не зарегистрирован)
+    await register_user(user_id, username, first_name)
+
+    # Если это переход по ссылке и пригласивший существует
+    if is_referral and referrer_id and referrer_id != user_id:
+        # Проверяем, не забанен ли пригласивший
+        if not await is_banned(referrer_id):
+            # Начисляем бонус пригласившему (+500)
+            await add_balance(referrer_id, 500)
+            await add_log(referrer_id, "Получил реферальный бонус", f"За пользователя {user_id}")
+            # Начисляем бонус новому пользователю (+500)
+            await add_balance(user_id, 500)
+            await add_log(user_id, "Получил реферальный бонус", f"От {referrer_id}")
+            # Уведомляем пригласившего (если бот может написать ему)
+            try:
+                await context.bot.send_message(
+                    referrer_id,
+                    f"🎉 По твоей ссылке зарегистрировался новый пользователь!\n"
+                    f"Ты и он получили по +500 COINS!"
+                )
+            except:
+                pass
+            await update.message.reply_text(
+                f"🎉 Ты перешёл по приглашению!\n"
+                f"Тебе и пригласившему начислено по +500 COINS!"
+            )
+
+    # Проверка на бан
+    if await is_banned(user_id):
         await update.message.reply_text("⛔ Вы заблокированы.")
         return
+
+    # Ежедневный бонус
     conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
     today = datetime.now().strftime("%Y-%m-%d")
-    user_data = await get_user(user.id)
+    user_data = await get_user(user_id)
     last_bonus = user_data['last_bonus'] if user_data else None
     bonus = await get_bonus_amount()
 
     if last_bonus != today:
-        await add_balance(user.id, bonus)
-        await conn.execute("UPDATE users SET last_bonus = $1 WHERE user_id = $2", today, user.id)
+        await add_balance(user_id, bonus)
+        await conn.execute("UPDATE users SET last_bonus = $1 WHERE user_id = $2", today, user_id)
         await conn.close()
-        balance = await get_balance(user.id)
+        balance = await get_balance(user_id)
         await update.message.reply_text(
-            f"🎁 **Ежедневный бонус получен!**\n➕ {bonus} COINS зачислено на баланс.",
+            f"🎁 **Ежедневный бонус получен!**\n➕ {bonus} COINS зачислено на баланс.\n💰 Баланс: {balance}",
             parse_mode='Markdown',
-            reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
+            reply_markup=main_keyboard if user_id != ADMIN_ID else admin_keyboard
         )
     else:
         await update.message.reply_text(
-            f"🏰 Добро пожаловать в **CoinFlow**!\n💰 Твой баланс: {await get_balance(user.id)} COINS",
+            f"🏰 Добро пожаловать в **CoinFlow**!\n💰 Твой баланс: {await get_balance(user_id)} COINS",
             parse_mode='Markdown',
-            reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
+            reply_markup=main_keyboard if user_id != ADMIN_ID else admin_keyboard
         )
 
 async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -244,7 +289,6 @@ async def invite(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# ===== РЕКЛАМИРОВАТЬ =====
 async def advertise_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Канал", callback_data="adv_channel")],
@@ -336,7 +380,6 @@ async def handle_advertise_request(update: Update, context: ContextTypes.DEFAULT
         context.user_data['advertise_mode'] = False
         context.user_data['adv_type'] = None
 
-# ===== АДМИНКА =====
 async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Нет доступа")
@@ -581,7 +624,7 @@ async def main():
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow запущен без ошибок!")
+    print("🚀 CoinFlow с реферальной системой запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
