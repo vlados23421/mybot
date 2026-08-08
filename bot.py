@@ -98,7 +98,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload = {
                 "price_amount": price,
                 "price_currency": "usd",
-                "pay_currency": "usdt",
+                "pay_currency": "usd",
                 "ipn_callback_url": f"https://{os.getenv('RENDER_EXTERNAL_URL')}/ipn",
                 "order_id": f"stars_{stars}_{update.effective_user.id}",
                 "order_description": f"Покупка {stars} Telegram Stars"
