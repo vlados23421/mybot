@@ -2,18 +2,15 @@ import os
 import asyncio
 import asyncpg
 import aiohttp
-import hmac
-import hashlib
+import json
+from datetime import datetime
 from aiohttp import web
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-
-# ===== ТВОИ КЛЮЧИ ОТ NOWPAYMENTS =====
-NOW_API_KEY = "NP8C82P-3JYMAGP-K0ZN9E3-7FTWCYZ"
-NOW_IPN_KEY = "eBzfV4qylMwLzjVGCr4n4yxOgJ+q/R+R"
+NETLIFY_TOKEN = os.getenv("NETLIFY_TOKEN")
 
 # ===== БАЗА ДАННЫХ =====
 async def init_db():
@@ -47,17 +44,9 @@ async def get_stats():
     return total_purchases, total_stars, total_revenue
 
 # ===== КЛАВИАТУРЫ =====
-from telegram import KeyboardButton, WebAppInfo
-
-webapp_btn = KeyboardButton("🌐 Открыть Web App", web_app=WebAppInfo(url="https://super-otter-0ce531.netlify.app/"))
-
 main_keyboard = ReplyKeyboardMarkup([
     ["⭐ Купить звёзды", "📊 Мои покупки"],
-    ["🌐 Открыть Web App", "📞 Поддержка"]
-], resize_keyboard=True)
-
-admin_keyboard = ReplyKeyboardMarkup([
-    ["📊 Статистика продаж"]
+    ["📞 Поддержка"]
 ], resize_keyboard=True)
 
 # ===== СТАРТ =====
@@ -67,12 +56,89 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🌟 **Добро пожаловать в StarWaves!**\n\n"
         f"Здесь ты можешь купить Telegram Stars по лучшей цене.\n"
-        f"💰 Оплата происходит через криптовалюту (TRX) в один клик.",
+        f"💰 Оплата через криптовалюту (TRX).",
         parse_mode='Markdown',
-        reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
+        reply_markup=main_keyboard
     )
 
-# ===== КУПИТЬ ЗВЁЗДЫ (через NOWPayments) =====
+# ===== КОМАНДА /WEB (открывает Web App) =====
+async def webapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "🌐 **Открыть Web App**\n\n"
+        "Нажми кнопку ниже, чтобы открыть магазин StarWaves:",
+        reply_markup=InlineKeyboardMarkup([
+            [InlineKeyboardButton("🌐 Открыть Web App", web_app=WebAppInfo(url="https://super-otter-0ce531.netlify.app/"))]
+        ]),
+        parse_mode='Markdown'
+    )
+
+# ===== КОМАНДА /ADDNEWS (добавить новость в Web App) =====
+async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Только для админа!")
+        return
+    
+    args = context.args
+    if not args:
+        await update.message.reply_text(
+            "❌ Используй: /addnews Текст новости\n"
+            "Пример: /addnews Мы добавили новый пакет звёзд!"
+        )
+        return
+    
+    text = " ".join(args)
+    today = datetime.now().strftime("%d %B %Y")
+    
+    # 1. Получаем текущий файл новостей с Netlify
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://super-otter-0ce531.netlify.app/news.json") as resp:
+            if resp.status == 200:
+                news = await resp.json()
+            else:
+                news = []
+    
+    # 2. Добавляем новую запись
+    news.append({
+        "id": len(news) + 1,
+        "date": today,
+        "text": text
+    })
+    
+    # 3. Записываем обновлённый файл обратно на Netlify через их API
+    site_id = "super-otter-0ce531"
+    headers = {
+        "Authorization": f"Bearer {NETLIFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    
+    async with aiohttp.ClientSession() as session:
+        async with session.get(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers) as resp:
+            if resp.status == 200:
+                # Файл существует, обновляем его
+                async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers, json=news) as put_resp:
+                    if put_resp.status == 200:
+                        await update.message.reply_text(
+                            f"✅ **Новость добавлена!**\n"
+                            f"📅 {today}\n"
+                            f"📝 {text}\n\n"
+                            f"🌐 Открой Web App, чтобы увидеть её."
+                        )
+                    else:
+                        await update.message.reply_text("❌ Ошибка при обновлении файла на сервере.")
+            else:
+                # Создаём файл, если его нет
+                async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers, json=news) as put_resp:
+                    if put_resp.status == 200:
+                        await update.message.reply_text(
+                            f"✅ **Новость добавлена!**\n"
+                            f"📅 {today}\n"
+                            f"📝 {text}\n\n"
+                            f"🌐 Открой Web App, чтобы увидеть её."
+                        )
+                    else:
+                        await update.message.reply_text("❌ Ошибка при создании файла на сервере.")
+
+# ===== КУПИТЬ ЗВЁЗДЫ =====
 async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("50 ⭐ - 1.0 TRX", callback_data="buy_50")],
@@ -82,7 +148,7 @@ async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
         [InlineKeyboardButton("1000 ⭐ - 15.0 TRX", callback_data="buy_1000")]
     ])
     await update.message.reply_text(
-        "🌟 **Выбери пакет звёзд и оплати в TRX:**",
+        "🌟 **Выбери пакет звёзд:**",
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -96,13 +162,12 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         price_map = {50: 1.0, 150: 3.0, 300: 5.0, 500: 7.5, 1000: 15.0}
         price = price_map[stars]
         
-        # Создаём счёт в NOWPayments
         async with aiohttp.ClientSession() as session:
             headers = {"x-api-key": NOW_API_KEY, "Content-Type": "application/json"}
             payload = {
                 "price_amount": price,
                 "price_currency": "usd",
-                "pay_currency": "trx",  # <--- ИЗМЕНЕНО НА TRX
+                "pay_currency": "trx",
                 "ipn_callback_url": f"https://{os.getenv('RENDER_EXTERNAL_URL')}/ipn",
                 "order_id": f"stars_{stars}_{update.effective_user.id}",
                 "order_description": f"Покупка {stars} Telegram Stars"
@@ -156,6 +221,17 @@ async def my_purchases(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text += f"⭐ {r['stars_amount']} звёзд — ${r['price_usd']} ({r['purchase_date'][:19]})\n"
     await update.message.reply_text(text, parse_mode='Markdown')
 
+# ===== ПОДДЕРЖКА =====
+async def support(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    await update.message.reply_text(
+        "📞 **Поддержка StarWaves**\n\n"
+        "Если у тебя есть вопросы, проблемы или предложения, свяжись с администратором:\n"
+        "👑 **@ArchibaldNn**\n\n"
+        "💬 Также ты можешь зайти в наш чат:\n"
+        "👉 @PrsAdvertisementMy",
+        parse_mode='Markdown'
+    )
+
 # ===== АДМИНКА =====
 async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -173,12 +249,6 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def ipn_webhook(request):
     try:
         data = await request.json()
-        # Проверяем подпись IPN
-        provided_sig = request.headers.get('x-nowpayments-sig')
-        computed_sig = hmac.new(NOW_IPN_KEY.encode(), str(data).encode(), hashlib.sha512).hexdigest()
-        if provided_sig != computed_sig:
-            return web.Response(text="Invalid signature", status=403)
-        
         if data.get("payment_status") == "confirmed" or data.get("payment_status") == "finished":
             order_id = data.get("order_id")
             if order_id and order_id.startswith("stars_"):
@@ -212,10 +282,12 @@ async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("web", webapp_command))
+    application.add_handler(CommandHandler("addnews", add_news_command))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^buy_"))
     application.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves with NOWPayments (TRX) запущен!")
+    print("🚀 StarWaves с авто-новостями запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
@@ -229,6 +301,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await buy_stars_menu(update, context)
     elif text == "📊 Мои покупки":
         await my_purchases(update, context)
+    elif text == "📞 Поддержка":
+        await support(update, context)
     elif text == "📊 Статистика продаж" and user_id == ADMIN_ID:
         await admin_stats(update, context)
 
