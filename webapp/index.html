@@ -5,332 +5,170 @@
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>StarWaves</title>
     <style>
-        /* ===== БАЗОВЫЕ СТИЛИ И ТЕМА ===== */
-        :root {
-            --bg: #0d1117;
-            --bg-card: rgba(22, 27, 34, 0.7);
-            --border: rgba(255, 255, 255, 0.08);
-            --text: #f0f6fc;
-            --text-muted: #8b949e;
-            --gold: #ffd700;
-            --gold-glow: rgba(255, 215, 0, 0.15);
-            --blue: #58a6ff;
-            --radius: 20px;
-            --shadow: 0 8px 32px rgba(0, 0, 0, 0.4);
-        }
-
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: var(--bg);
-            color: var(--text);
+            background: #0d1117;
+            color: #f0f6fc;
             padding: 20px;
             min-height: 100vh;
-            background-image: radial-gradient(circle at 10% 20%, rgba(255, 215, 0, 0.03) 0%, transparent 60%);
         }
 
-        /* ===== АНИМАЦИИ ===== */
-        @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(20px); }
-            to { opacity: 1; transform: translateY(0); }
-        }
-        @keyframes pulse {
-            0%, 100% { opacity: 1; }
-            50% { opacity: 0.5; }
-        }
-        @keyframes shimmer {
-            0% { background-position: -200% 0; }
-            100% { background-position: 200% 0; }
-        }
-
-        /* ===== ЗАГОЛОВОК ===== */
         .header {
             text-align: center;
-            padding: 30px 0 20px;
-            animation: fadeUp 0.6s ease-out;
+            padding: 20px 0;
         }
-        .header .logo {
-            font-size: 42px;
-            background: linear-gradient(135deg, var(--gold), #ff8c00);
+        .header h1 {
+            font-size: 32px;
+            background: linear-gradient(135deg, #ffd700, #ff8c00);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             font-weight: 800;
-            letter-spacing: -1px;
         }
-        .header .sub {
-            color: var(--text-muted);
-            font-size: 14px;
-            margin-top: 4px;
-            letter-spacing: 0.5px;
-        }
+        .header p { color: #8b949e; font-size: 14px; }
 
-        /* ===== СТАТУС / БАЛАНС ===== */
-        .balance-card {
-            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 140, 0, 0.05));
-            border: 1px solid rgba(255, 215, 0, 0.2);
-            border-radius: var(--radius);
-            padding: 20px;
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            margin-bottom: 20px;
-            animation: fadeUp 0.8s ease-out;
-            backdrop-filter: blur(10px);
-        }
-        .balance-card .label { color: var(--text-muted); font-size: 13px; }
-        .balance-card .amount { font-size: 24px; font-weight: 700; color: var(--gold); }
-        .balance-card .btn-small {
-            background: rgba(255, 255, 255, 0.1);
-            border: none;
-            color: #fff;
-            padding: 8px 16px;
-            border-radius: 50px;
-            font-size: 12px;
-            cursor: pointer;
-            transition: all 0.2s;
-        }
-        .balance-card .btn-small:hover { background: rgba(255, 255, 255, 0.2); }
-
-        /* ===== КАРТОЧКИ (GLASSMORPHISM) ===== */
         .card {
-            background: var(--bg-card);
-            border: 1px solid var(--border);
+            background: rgba(22, 27, 34, 0.7);
+            border: 1px solid rgba(255, 255, 255, 0.08);
             backdrop-filter: blur(12px);
-            border-radius: var(--radius);
+            border-radius: 20px;
             padding: 18px;
             margin-bottom: 16px;
-            box-shadow: var(--shadow);
-            animation: fadeUp 1s ease-out;
             transition: transform 0.2s, box-shadow 0.2s;
         }
-        .card:hover { transform: translateY(-2px); box-shadow: 0 12px 40px rgba(0, 0, 0, 0.6); }
+        .card:hover { transform: translateY(-2px); }
 
-        .card-header {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
+        .news-item {
+            background: rgba(255, 255, 255, 0.03);
+            border-radius: 12px;
+            padding: 14px;
             margin-bottom: 12px;
+            border-left: 4px solid #ffd700;
+            animation: fadeUp 0.6s ease-out;
         }
-        .card-header h3 { font-size: 18px; font-weight: 600; }
-        .badge {
-            background: var(--gold);
-            color: #000;
-            padding: 2px 10px;
-            border-radius: 50px;
-            font-size: 10px;
-            font-weight: 700;
-            text-transform: uppercase;
+        .news-item .date { color: #8b949e; font-size: 12px; }
+        .news-item .text { color: #f0f6fc; font-size: 14px; line-height: 1.6; margin-top: 4px; }
+
+        @keyframes fadeUp {
+            from { opacity: 0; transform: translateY(15px); }
+            to { opacity: 1; transform: translateY(0); }
         }
-        .badge-new { background: var(--blue); color: #fff; }
 
-        .news-date { color: var(--text-muted); font-size: 12px; margin-bottom: 6px; }
-        .news-text { color: var(--text); font-size: 14px; line-height: 1.6; }
-
-        /* ===== СПИСОК ПАКЕТОВ ===== */
-        .package-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 12px 0;
-            border-bottom: 1px solid var(--border);
-            transition: background 0.2s;
-        }
-        .package-item:last-child { border-bottom: none; }
-        .package-item:hover { background: rgba(255, 255, 255, 0.03); border-radius: 8px; padding: 12px 8px; }
-
-        .package-item .name { font-weight: 500; }
-        .package-item .price { color: var(--gold); font-weight: 600; }
-        .package-item .icon { color: var(--text-muted); font-size: 12px; margin-right: 6px; }
-
-        /* ===== КНОПКИ ===== */
         .btn {
             display: block;
             width: 100%;
             padding: 16px;
-            background: linear-gradient(135deg, var(--gold), #ff8c00);
+            background: linear-gradient(135deg, #ffd700, #ff8c00);
             color: #0d1117;
             border: none;
             border-radius: 14px;
             font-size: 16px;
             font-weight: 700;
             cursor: pointer;
-            transition: all 0.3s;
             text-align: center;
             text-decoration: none;
             margin-top: 12px;
-            letter-spacing: 0.3px;
+            transition: all 0.3s;
         }
         .btn:hover {
             transform: scale(1.02);
-            box-shadow: 0 4px 20px var(--gold-glow);
+            box-shadow: 0 4px 20px rgba(255, 215, 0, 0.15);
         }
-        .btn:active { transform: scale(0.97); }
 
         .btn-secondary {
             background: rgba(255, 255, 255, 0.08);
-            color: #fff;
-            border: 1px solid var(--border);
+            color: #f0f6fc;
+            border: 1px solid rgba(255, 255, 255, 0.08);
         }
-        .btn-secondary:hover {
-            background: rgba(255, 255, 255, 0.15);
-            box-shadow: none;
-        }
-        .btn-secondary:active { background: rgba(255, 255, 255, 0.05); }
 
-        /* ===== СТАТИСТИКА ===== */
-        .stat-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 8px 0;
-            border-bottom: 1px solid var(--border);
-        }
-        .stat-row:last-child { border-bottom: none; }
-        .stat-row .label { color: var(--text-muted); }
-        .stat-row .value { color: var(--text); font-weight: 500; }
-        .stat-row .value.gold { color: var(--gold); }
-
-        /* ===== ССЫЛКИ И ФУТЕР ===== */
-        .link {
-            color: var(--blue);
-            text-decoration: none;
-            font-weight: 500;
-        }
-        .link:hover { text-decoration: underline; }
-
+        .link { color: #58a6ff; text-decoration: none; }
         .footer {
             text-align: center;
-            color: var(--text-muted);
+            color: #8b949e;
             font-size: 12px;
             padding: 30px 0 10px;
-            animation: fadeUp 1.4s ease-out;
         }
 
-        /* ===== SKELETON LOADER (для статистики) ===== */
         .skeleton {
-            background: linear-gradient(90deg, var(--bg-card) 25%, rgba(255,255,255,0.05) 50%, var(--bg-card) 75%);
+            background: linear-gradient(90deg, rgba(22,27,34,0.7) 25%, rgba(255,255,255,0.05) 50%, rgba(22,27,34,0.7) 75%);
             background-size: 200% 100%;
             animation: shimmer 1.5s infinite;
             border-radius: 8px;
             height: 16px;
             width: 60px;
         }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
+
+        .package-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255,255,255,0.05);
+        }
+        .package-item:last-child { border-bottom: none; }
+        .package-item .price { color: #ffd700; font-weight: 600; }
     </style>
 </head>
 <body>
     <div class="header">
-        <div class="logo">⭐ StarWaves</div>
-        <div class="sub">Магазин Telegram Stars</div>
+        <h1>⭐ StarWaves</h1>
+        <p>Магазин Telegram Stars</p>
     </div>
 
-    <!-- Баланс / Статус -->
-    <div class="balance-card" id="balanceCard">
-        <div>
-            <div class="label">💰 Баланс (TRX)</div>
-            <div class="amount" id="balanceDisplay">0.00</div>
-        </div>
-        <button class="btn-small" onclick="window.Telegram.WebApp.close()">✕ Закрыть</button>
-    </div>
-
-    <!-- Новости -->
+    <!-- НОВОСТИ (загружаются из JSON) -->
     <div class="card">
-        <div class="card-header">
-            <h3>📢 Новости</h3>
-            <span class="badge badge-new">NEW</span>
+        <h3 style="margin-bottom: 12px;">📢 Новости</h3>
+        <div id="newsContainer">
+            <p style="color: #8b949e;">Загрузка новостей...</p>
         </div>
-        <p class="news-date">9 августа 2026</p>
-        <p class="news-text">
-            Мы запустили магазин звёзд! Теперь ты можешь покупать Telegram Stars по лучшим ценам через криптовалюту.
-            <br><br>
-            <a href="https://t.me/StarWavesBuyBot" class="link">🚀 Перейти к боту →</a>
-        </p>
     </div>
 
-    <!-- Пакеты -->
-    <div class="card" id="packagesCard">
-        <div class="card-header">
-            <h3>⭐ Популярные пакеты</h3>
-        </div>
-        <div class="package-item">
-            <span><span class="icon">⭐</span> <span class="name">50 звёзд</span></span>
-            <span class="price">1.0 TRX</span>
-        </div>
-        <div class="package-item">
-            <span><span class="icon">⭐</span> <span class="name">150 звёзд</span></span>
-            <span class="price">3.0 TRX</span>
-        </div>
-        <div class="package-item">
-            <span><span class="icon">⭐</span> <span class="name">300 звёзд</span></span>
-            <span class="price">5.0 TRX</span>
-        </div>
-        <div class="package-item">
-            <span><span class="icon">⭐</span> <span class="name">500 звёзд</span></span>
-            <span class="price">7.5 TRX</span>
-        </div>
-        <div class="package-item">
-            <span><span class="icon">⭐</span> <span class="name">1000 звёзд</span></span>
-            <span class="price">15.0 TRX</span>
-        </div>
+    <!-- ПАКЕТЫ -->
+    <div class="card">
+        <h3 style="margin-bottom: 12px;">⭐ Популярные пакеты</h3>
+        <div class="package-item"><span>50 звёзд</span><span class="price">1.0 TRX</span></div>
+        <div class="package-item"><span>150 звёзд</span><span class="price">3.0 TRX</span></div>
+        <div class="package-item"><span>300 звёзд</span><span class="price">5.0 TRX</span></div>
+        <div class="package-item"><span>500 звёзд</span><span class="price">7.5 TRX</span></div>
+        <div class="package-item"><span>1000 звёзд</span><span class="price">15.0 TRX</span></div>
         <a href="https://t.me/StarWavesBuyBot" class="btn">🛒 Купить в боте</a>
     </div>
 
-    <!-- Статистика -->
+    <!-- СТАТИСТИКА (заглушка) -->
     <div class="card">
-        <div class="card-header">
-            <h3>📊 Статистика</h3>
-        </div>
-        <div class="stat-row">
-            <span class="label">Всего покупок</span>
-            <span class="value" id="totalPurchases">—</span>
-        </div>
-        <div class="stat-row">
-            <span class="label">Продано звёзд</span>
-            <span class="value gold" id="totalStars">—</span>
-        </div>
-        <div class="stat-row">
-            <span class="label">Выручка (USD)</span>
-            <span class="value gold" id="totalRevenue">—</span>
-        </div>
+        <h3 style="margin-bottom: 12px;">📊 Статистика</h3>
+        <div style="display: flex; justify-content: space-between; padding: 6px 0;"><span>Всего покупок</span><span style="color: #ffd700;">42</span></div>
+        <div style="display: flex; justify-content: space-between; padding: 6px 0;"><span>Продано звёзд</span><span style="color: #ffd700;">5,200 ⭐</span></div>
+        <div style="display: flex; justify-content: space-between; padding: 6px 0;"><span>Выручка</span><span style="color: #ffd700;">$124.50</span></div>
     </div>
 
-    <!-- Связь -->
+    <!-- СВЯЗЬ -->
     <div class="card">
-        <div class="card-header">
-            <h3>💬 Связь</h3>
-        </div>
-        <p style="color: var(--text-muted); font-size: 14px;">
-            Есть вопросы? Напиши администратору:
-            <br>
-            <a href="https://t.me/ArchibaldNn" class="link">@ArchibaldNn</a>
-        </p>
+        <h3 style="margin-bottom: 12px;">💬 Связь</h3>
+        <p style="color: #8b949e;">Напиши администратору: <a href="https://t.me/ArchibaldNn" class="link">@ArchibaldNn</a></p>
     </div>
 
-    <div class="footer">
-        StarWaves © 2026 · Все права защищены
-    </div>
+    <div class="footer">StarWaves © 2026</div>
 
     <script>
-        // Инициализация Web App
-        window.Telegram.WebApp.ready();
-        window.Telegram.WebApp.expand();
-
-        // Функция для обновления статистики (заглушка, позже можно заменить на реальный API)
-        function updateStats() {
-            // Здесь можно запросить данные у бота через Telegram.WebApp.sendData()
-            // Пока оставляем заглушки
-            document.getElementById('totalPurchases').textContent = '42';
-            document.getElementById('totalStars').textContent = '5,200 ⭐';
-            document.getElementById('totalRevenue').textContent = '$124.50';
-            document.getElementById('balanceDisplay').textContent = '3.50';
+        async function loadNews() {
+            try {
+                const response = await fetch('news.json');
+                const news = await response.json();
+                const container = document.getElementById('newsContainer');
+                container.innerHTML = '';
+                news.forEach(item => {
+                    const div = document.createElement('div');
+                    div.className = 'news-item';
+                    div.innerHTML = `<div class="date">${item.date}</div><div class="text">${item.text}</div>`;
+                    container.appendChild(div);
+                });
+            } catch (e) {
+                document.getElementById('newsContainer').innerHTML = '<p style="color: #ff6b6b;">⚠️ Ошибка загрузки новостей</p>';
+            }
         }
-
-        // Загружаем статистику при открытии
-        setTimeout(updateStats, 500);
-
-        // Обработка нажатия на кнопку покупки
-        document.querySelector('.btn')?.addEventListener('click', function(e) {
-            // Если нужно передать данные в бот
-            // window.Telegram.WebApp.sendData(JSON.stringify({ action: 'buy' }));
-        });
+        document.addEventListener('DOMContentLoaded', loadNews);
     </script>
 </body>
-  </html>
+                                                            </html>
