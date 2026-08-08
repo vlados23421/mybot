@@ -20,7 +20,7 @@ main_keyboard = ReplyKeyboardMarkup([
 
 admin_keyboard = ReplyKeyboardMarkup([
     ["📊 Статистика", "📋 Список пользователей"],
-    ["⚖️ Изменить баланс", "📋 Активные задания"],
+    ["⚖️ Изменить баланс", "📝 Добавить задание"],
     ["📢 Рассылка", "⛔ Забанить / Разбанить"],
     ["📤 Экспорт в файл", "⚙️ Настроить бонус"],
     ["📜 Журнал событий", "🔙 Выйти из админки"]
@@ -339,44 +339,6 @@ async def admin_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⚖️ Введи ID и сумму через пробел:\nПример: 123456789 500")
     context.user_data['balance_mode'] = True
 
-async def admin_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        return
-    await update.message.reply_text(
-        "📝 **Введи данные задания в формате:**\n\n"
-        "`Название | Ссылка | Награда`\n\n"
-        "Пример:\n"
-        "`Мой канал | https://t.me/MyChannel | 500`"
-    )
-    context.user_data['task_add_mode'] = True
-
-async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('task_add_mode') and update.effective_user.id == ADMIN_ID:
-        text = update.message.text
-        parts = text.split("|")
-        if len(parts) != 3:
-            await update.message.reply_text("❌ Неверный формат! Используй: Название | Ссылка | Награда")
-            return
-        name = parts[0].strip()
-        link = parts[1].strip()
-        try:
-            reward = int(parts[2].strip())
-        except:
-            await update.message.reply_text("❌ Награда должна быть числом!")
-            return
-        
-        conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-        await conn.execute(
-            "INSERT INTO tasks (name, link, channel_id, reward) VALUES ($1, $2, $3, $4)",
-            name, link, link, reward
-        )
-        await conn.close()
-        
-        context.user_data['task_add_mode'] = False
-        
-        await update.message.reply_text(f"✅ Задание '{name}' добавлено!")
-        return
-
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
@@ -432,6 +394,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if text == "⚖️ Изменить баланс":
             await admin_balance(update, context)
+            return
+        if text == "📝 Добавить задание":
+            await admin_tasks(update, context)
             return
         if text == "📢 Рассылка":
             await admin_broadcast(update, context)
