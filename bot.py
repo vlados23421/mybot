@@ -4,7 +4,7 @@ import asyncpg
 from datetime import datetime
 from aiohttp import web
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, PreCheckoutQueryHandler, ContextTypes
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
 from database import init_db, get_user, register_user, add_balance, get_balance, get_active_tasks, is_task_done, mark_task_done, get_stats, get_all_users, is_banned, set_ban, add_log, get_logs, get_bonus_amount, set_bonus_amount, get_maintenance_mode, set_maintenance_mode, get_maintenance_message, create_verify_request, get_pending_requests, approve_request, reject_request, is_user_verified, get_user_requests
 
@@ -26,7 +26,7 @@ admin_keyboard = ReplyKeyboardMarkup([
     ["📜 Журнал событий", "🔙 Выйти из админки"]
 ], resize_keyboard=True)
 
-# ===== ЖИВАЯ СТАТИСТИКА (считает из базы) =====
+# ===== ЖИВАЯ СТАТИСТИКА =====
 async def get_task_counts():
     conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
     try:
@@ -98,7 +98,6 @@ async def my_cabinet(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# ===== СТАТИСТИКА =====
 async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     counts = await get_task_counts()
     text = (
@@ -113,7 +112,6 @@ async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
-# ===== ИНСТРУКЦИЯ =====
 async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = (
         "📋 **Инструкция по использованию CoinFlow**\n\n"
@@ -126,7 +124,6 @@ async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
     )
     await update.message.reply_text(text, parse_mode='Markdown')
 
-# ===== ЗАРАБОТАТЬ =====
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("📢 Подписаться на канал", callback_data="tasks_channels")],
@@ -581,11 +578,10 @@ async def main():
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_main)"))
     application.add_handler(CallbackQueryHandler(admin_add_task_callback, pattern="^(add_type_|admin_back)"))
     application.add_handler(CallbackQueryHandler(advertise_handler, pattern="^(adv_|back_)"))
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout))
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow с функцией рекламы запущен!")
+    print("🚀 CoinFlow запущен без ошибок!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
