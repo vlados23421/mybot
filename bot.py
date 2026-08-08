@@ -485,7 +485,7 @@ async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_
         context.user_data['adding_task_type'] = None
         
         await update.message.reply_text(f"✅ Задание '{name}' добавлено! Тип: {task_type}")
-
+        return
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
