@@ -475,11 +475,11 @@ async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_
         
         task_type = context.user_data.get('adding_task_type', 'channel')
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-        await conn.execute(
-            "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
-            name, link, link, task_type, reward
-        )
-        await conn.close()
+await conn.execute(
+    "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
+    name, link, link, task_type, reward
+)
+await conn.close()
 
 context.user_data['task_add_mode'] = False
 context.user_data['adding_task_type'] = None
