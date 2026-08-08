@@ -475,17 +475,17 @@ async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_
         
         task_type = context.user_data.get('adding_task_type', 'channel')
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-await conn.execute(
-    "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
-    name, link, link, task_type, reward
-)
-await conn.close()
-
-context.user_data['task_add_mode'] = False
-context.user_data['adding_task_type'] = None
-
-await update.message.reply_text(f"✅ Задание '{name}' добавлено! Тип: {task_type}")
-return
+        await conn.execute(
+            "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
+            name, link, link, task_type, reward
+        )
+        await conn.close()
+        
+        context.user_data['task_add_mode'] = False
+        context.user_data['adding_task_type'] = None
+        
+        await update.message.reply_text(f"✅ Задание '{name}' добавлено! Тип: {task_type}")
+        return
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -615,7 +615,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['bonus_mode'] = False
         return
 
-    # Если нажата несуществующая кнопка — просто игнорируем (ничего не пишем)
     return
 
 async def health_check(request):
@@ -645,7 +644,7 @@ async def main():
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow полностью исправлен!")
+    print("🚀 CoinFlow (финальная версия) запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
