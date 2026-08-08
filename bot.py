@@ -29,24 +29,12 @@ admin_keyboard = ReplyKeyboardMarkup([
 async def get_task_counts():
     conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
     try:
-        channels = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'channel' AND active = 1")
-        groups = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'group' AND active = 1")
-        views = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'view' AND active = 1")
-        bots = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'bot' AND active = 1")
-        boosts = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'boost' AND active = 1")
-        reactions = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE type = 'reaction' AND active = 1")
+        channels = await conn.fetchval("SELECT COUNT(*) FROM tasks WHERE active = 1")
     except:
-        channels = groups = views = bots = boosts = reactions = 0
+        channels = 0
     finally:
         await conn.close()
-    return {
-        "channels": channels or 0,
-        "groups": groups or 0,
-        "views": views or 0,
-        "bots": bots or 0,
-        "boosts": boosts or 0,
-        "reactions": reactions or 0
-    }
+    return {"total": channels or 0}
 
 async def check_maintenance(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await get_maintenance_mode():
@@ -137,12 +125,7 @@ async def bot_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
     counts = await get_task_counts()
     text = (
         f"📊 **Статистика CoinFlow**\n\n"
-        f"📢 Заданий на каналы: {counts['channels']}\n"
-        f"👥 Заданий на группы: {counts['groups']}\n"
-        f"👁️ Заданий на просмотр: {counts['views']}\n"
-        f"🤖 Заданий на боты: {counts['bots']}\n"
-        f"⚡ Заданий на бусты: {counts['boosts']}\n"
-        f"🔥 Заданий на реакции: {counts['reactions']}\n\n"
+        f"📢 Всего заданий: {counts['total']}\n\n"
         f"👑 Выберите способ заработка 👇"
     )
     await update.message.reply_text(text, parse_mode='Markdown')
@@ -152,8 +135,8 @@ async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
         "📋 **Инструкция по использованию CoinFlow**\n\n"
         "💰 **Как зарабатывать COINS:**\n"
         "1️⃣ Нажми кнопку **«🤑 Заработать»**.\n"
-        "2️⃣ Выбери тип задания (канал, группа, просмотр и т.д.).\n"
-        "3️⃣ Нажми на задание и выполни условие (подпишись, вступи, поставь реакцию).\n"
+        "2️⃣ Выбери задание из списка.\n"
+        "3️⃣ Нажми на задание и выполни условие (подпишись, вступи).\n"
         "4️⃣ Нажми **«✅ Проверить»** — бот автоматически проверит выполнение и начислит COINS.\n\n"
         "📌 **Важно:** Использование ботов и скриптов запрещено. Нарушение ведёт к блокировке."
     )
@@ -162,70 +145,25 @@ async def instructions(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def earn(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if await check_maintenance(update, context):
         return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Подписаться на канал", callback_data="tasks_channels")],
-        [InlineKeyboardButton("👥 Вступить в группу", callback_data="tasks_groups")],
-        [InlineKeyboardButton("👁️ Просмотр постов", callback_data="tasks_views")],
-        [InlineKeyboardButton("🤖 Перейти в бота", callback_data="tasks_bots")],
-        [InlineKeyboardButton("⚡ Премиум буст (заряды)", callback_data="tasks_boosts")],
-        [InlineKeyboardButton("🔥 Поставить реакции", callback_data="tasks_reactions")],
-        [InlineKeyboardButton("🔙 В меню", callback_data="back_main")]
-    ])
-    await update.message.reply_text(
-        "🤑 **Выберите способ заработка 👇**",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
-
-async def task_category_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update, context):
-        return
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    
-    if data == "back_main":
-        await start(update, context)
-        return
-    
-    task_type_map = {
-        "tasks_channels": "channel",
-        "tasks_groups": "group",
-        "tasks_views": "view",
-        "tasks_bots": "bot",
-        "tasks_boosts": "boost",
-        "tasks_reactions": "reaction"
-    }
-    task_type = task_type_map.get(data)
-    
-    conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-    tasks = await conn.fetch("SELECT id, name, link, reward FROM tasks WHERE type = $1 AND active = 1", task_type)
-    await conn.close()
-    
+    tasks = await get_active_tasks()
     if not tasks:
-        await query.edit_message_text(
-            f"📭 В этой категории пока нет заданий.\n\nЗайди позже! 🚀",
-            parse_mode='Markdown'
-        )
+        await update.message.reply_text("📭 Сейчас нет заданий.")
         return
-    
     keyboard = []
     for task in tasks:
+        done = await is_task_done(update.effective_user.id, task['id'])
+        status = "✅ Выполнено" if done else f"🔹 {task['reward']} COINS"
         keyboard.append([InlineKeyboardButton(
-            f"🔹 {task['name']} ({task['reward']} COINS)",
+            f"{task['name']} - {status}",
             callback_data=f"do_{task['id']}"
         )])
     keyboard.append([InlineKeyboardButton("🔙 Назад", callback_data="back_main")])
-    
-    await query.edit_message_text(
+    await update.message.reply_text(
         "🤑 **Доступные задания:**",
-        reply_markup=InlineKeyboardMarkup(keyboard),
-        parse_mode='Markdown'
+        reply_markup=InlineKeyboardMarkup(keyboard)
     )
 
 async def task_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if await check_maintenance(update, context):
-        return
     query = update.callback_query
     await query.answer()
     data = query.data
@@ -314,17 +252,6 @@ async def advertise_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await start(update, context)
         return
     
-    type_map = {
-        "adv_channel": "channel",
-        "adv_group": "group",
-        "adv_post": "view",
-        "adv_bot": "bot",
-        "adv_boost": "boost",
-        "adv_reaction": "reaction"
-    }
-    adv_type = type_map.get(data, "channel")
-    context.user_data['adv_type'] = adv_type
-    
     await query.edit_message_text(
         f"📢 **Выберите канал для рекламы**\n\n"
         f"1️⃣ Перешлите любое сообщение из канала в этот чат.\n"
@@ -360,13 +287,12 @@ async def handle_advertise_request(update: Update, context: ContextTypes.DEFAULT
             await update.message.reply_text("❌ Не удалось проверить канал. Убедитесь, что бот добавлен.")
             return
         
-        adv_type = context.user_data.get('adv_type', 'channel')
         reward = 200
         
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         await conn.execute(
-            "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
-            f"Подпишись на {chat_title}", f"https://t.me/{chat_title}", chat_id, adv_type, reward
+            "INSERT INTO tasks (name, link, channel_id, reward) VALUES ($1, $2, $3, $4)",
+            f"Подпишись на {chat_title}", f"https://t.me/{chat_title}", chat_id, reward
         )
         await conn.close()
         
@@ -374,11 +300,9 @@ async def handle_advertise_request(update: Update, context: ContextTypes.DEFAULT
             f"✅ **Задание создано!**\n\n"
             f"📢 Канал: {chat_title}\n"
             f"💰 Награда: {reward} COINS\n"
-            f"📋 Тип: {adv_type}\n\n"
-            f"Пользователи могут выполнить это задание в разделе «Заработать»."
+            f"📋 Пользователи могут выполнить это задание в разделе «Заработать»."
         )
         context.user_data['advertise_mode'] = False
-        context.user_data['adv_type'] = None
 
 async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
@@ -418,45 +342,13 @@ async def admin_balance(update: Update, context: ContextTypes.DEFAULT_TYPE):
 async def admin_tasks(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         return
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("📢 Канал", callback_data="add_type_channel")],
-        [InlineKeyboardButton("👥 Группа", callback_data="add_type_group")],
-        [InlineKeyboardButton("👁️ Просмотр", callback_data="add_type_view")],
-        [InlineKeyboardButton("🤖 Бот", callback_data="add_type_bot")],
-        [InlineKeyboardButton("⚡ Буст", callback_data="add_type_boost")],
-        [InlineKeyboardButton("🔥 Реакция", callback_data="add_type_reaction")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="admin_back")]
-    ])
     await update.message.reply_text(
-        "📝 **Выбери тип задания:**",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
+        "📝 **Введи данные задания в формате:**\n\n"
+        "`Название | Ссылка | Награда`\n\n"
+        "Пример:\n"
+        "`Мой канал | https://t.me/MyChannel | 500`"
     )
-
-async def admin_add_task_callback(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    if update.effective_user.id != ADMIN_ID:
-        return
-    data = query.data
-    
-    if data == "admin_back":
-        await admin_panel(update, context)
-        return
-    
-    if data.startswith("add_type_"):
-        task_type = data.replace("add_type_", "")
-        context.user_data['adding_task_type'] = task_type
-        await query.edit_message_text(
-            f"📝 **Добавление задания**\n\n"
-            f"Тип: `{task_type}`\n\n"
-            f"Введи данные в формате:\n"
-            f"`Название | Ссылка | Награда`\n\n"
-            f"Пример:\n"
-            f"`Мой канал | https://t.me/MyChannel | 500`",
-            parse_mode='Markdown'
-        )
-        context.user_data['task_add_mode'] = True
+    context.user_data['task_add_mode'] = True
 
 async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if context.user_data.get('task_add_mode') and update.effective_user.id == ADMIN_ID:
@@ -473,18 +365,16 @@ async def handle_admin_task_input(update: Update, context: ContextTypes.DEFAULT_
             await update.message.reply_text("❌ Награда должна быть числом!")
             return
         
-        task_type = context.user_data.get('adding_task_type', 'channel')
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         await conn.execute(
-            "INSERT INTO tasks (name, link, channel_id, type, reward) VALUES ($1, $2, $3, $4, $5)",
-            name, link, link, task_type, reward
+            "INSERT INTO tasks (name, link, channel_id, reward) VALUES ($1, $2, $3, $4)",
+            name, link, link, reward
         )
         await conn.close()
         
         context.user_data['task_add_mode'] = False
-        context.user_data['adding_task_type'] = None
         
-        await update.message.reply_text(f"✅ Задание '{name}' добавлено! Тип: {task_type}")
+        await update.message.reply_text(f"✅ Задание '{name}' добавлено!")
         return
 
 async def admin_broadcast(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -542,9 +432,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if text == "⚖️ Изменить баланс":
             await admin_balance(update, context)
-            return
-        if text == "📋 Активные задания":
-            await admin_tasks(update, context)
             return
         if text == "📢 Рассылка":
             await admin_broadcast(update, context)
@@ -637,14 +524,12 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("adminka", adminka_command))
 
-    application.add_handler(CallbackQueryHandler(task_category_handler, pattern="^(tasks_|back_main)"))
     application.add_handler(CallbackQueryHandler(task_handler, pattern="^(do_|back_main)"))
-    application.add_handler(CallbackQueryHandler(admin_add_task_callback, pattern="^(add_type_|admin_back)"))
     application.add_handler(CallbackQueryHandler(advertise_handler, pattern="^(adv_|back_)"))
 
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
 
-    print("🚀 CoinFlow (финальная версия) запущен!")
+    print("🚀 CoinFlow (упрощённая версия) запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
