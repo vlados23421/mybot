@@ -558,8 +558,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if text == "🔙 Выйти из админки":
             await update.message.reply_text("👋 Выход из админки.", reply_markup=main_keyboard)
             return
-        await update.message.reply_text("⏳ В разработке")
-        return
 
     if context.user_data.get('task_add_mode') and user_id == ADMIN_ID:
         await handle_admin_task_input(update, context)
@@ -617,7 +615,8 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['bonus_mode'] = False
         return
 
-    await update.message.reply_text("⏳ В разработке")
+    # Если нажата несуществующая кнопка — просто игнорируем (ничего не пишем)
+    return
 
 async def health_check(request):
     return web.Response(text="OK")
