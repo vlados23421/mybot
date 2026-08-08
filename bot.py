@@ -63,7 +63,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         f"🌟 **Добро пожаловать в StarWaves!**\n\n"
         f"Здесь ты можешь купить Telegram Stars по лучшей цене.\n"
-        f"💰 Оплата происходит через криптовалюту (USDT) в один клик.",
+        f"💰 Оплата происходит через криптовалюту (TRX) в один клик.",
         parse_mode='Markdown',
         reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
     )
@@ -71,14 +71,14 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 # ===== КУПИТЬ ЗВЁЗДЫ (через NOWPayments) =====
 async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("50 ⭐ - 1.0 USDT", callback_data="buy_50")],
-        [InlineKeyboardButton("150 ⭐ - 3.0 USDT", callback_data="buy_150")],
-        [InlineKeyboardButton("300 ⭐ - 5.0 USDT", callback_data="buy_300")],
-        [InlineKeyboardButton("500 ⭐ - 7.5 USDT", callback_data="buy_500")],
-        [InlineKeyboardButton("1000 ⭐ - 15.0 USDT", callback_data="buy_1000")]
+        [InlineKeyboardButton("50 ⭐ - 1.0 TRX", callback_data="buy_50")],
+        [InlineKeyboardButton("150 ⭐ - 3.0 TRX", callback_data="buy_150")],
+        [InlineKeyboardButton("300 ⭐ - 5.0 TRX", callback_data="buy_300")],
+        [InlineKeyboardButton("500 ⭐ - 7.5 TRX", callback_data="buy_500")],
+        [InlineKeyboardButton("1000 ⭐ - 15.0 TRX", callback_data="buy_1000")]
     ])
     await update.message.reply_text(
-        "🌟 **Выбери пакет звёзд и оплати в USDT:**",
+        "🌟 **Выбери пакет звёзд и оплати в TRX:**",
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -98,7 +98,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
             payload = {
                 "price_amount": price,
                 "price_currency": "usd",
-                "pay_currency": "usd",
+                "pay_currency": "trx",  # <--- ИЗМЕНЕНО НА TRX
                 "ipn_callback_url": f"https://{os.getenv('RENDER_EXTERNAL_URL')}/ipn",
                 "order_id": f"stars_{stars}_{update.effective_user.id}",
                 "order_description": f"Покупка {stars} Telegram Stars"
@@ -108,7 +108,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 if "invoice_url" in result:
                     await query.edit_message_text(
                         f"💳 **Счёт создан!**\n\n"
-                        f"💰 Сумма: {price} USDT\n"
+                        f"💰 Сумма: {price} TRX\n"
                         f"⭐ Звёзды: {stars}\n\n"
                         f"Перейдите по ссылке ниже, чтобы оплатить:",
                         reply_markup=InlineKeyboardMarkup([
@@ -211,7 +211,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^buy_"))
     application.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves with NOWPayments запущен!")
+    print("🚀 StarWaves with NOWPayments (TRX) запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
