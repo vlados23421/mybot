@@ -47,9 +47,13 @@ async def get_stats():
     return total_purchases, total_stars, total_revenue
 
 # ===== КЛАВИАТУРЫ =====
+from telegram import KeyboardButton, WebAppInfo
+
+webapp_btn = KeyboardButton("🌐 Открыть Web App", web_app=WebAppInfo(url="https://super-otter-0ce531.netlify.app/"))
+
 main_keyboard = ReplyKeyboardMarkup([
-    ["⭐ Купить звёзды"],
-    ["📊 Мои покупки"]
+    ["⭐ Купить звёзды", "📊 Мои покупки"],
+    ["🌐 Открыть Web App", "📞 Поддержка"]
 ], resize_keyboard=True)
 
 admin_keyboard = ReplyKeyboardMarkup([
