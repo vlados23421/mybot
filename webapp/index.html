@@ -14,10 +14,17 @@
             min-height: 100vh;
         }
 
-        .header {
-            text-align: center;
-            padding: 20px 0;
+        /* ===== АНИМАЦИЯ ПУЛЬСАЦИИ ===== */
+        @keyframes pulse {
+            0% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
+            70% { box-shadow: 0 0 0 15px rgba(255, 215, 0, 0); }
+            100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
         }
+        .btn-glow {
+            animation: pulse 2s infinite;
+        }
+
+        .header { text-align: center; padding: 20px 0; }
         .header h1 {
             font-size: 32px;
             background: linear-gradient(135deg, #ffd700, #ff8c00);
@@ -34,7 +41,7 @@
             border-radius: 20px;
             padding: 18px;
             margin-bottom: 16px;
-            transition: transform 0.2s, box-shadow 0.2s;
+            transition: transform 0.2s;
         }
         .card:hover { transform: translateY(-2px); }
 
@@ -44,15 +51,20 @@
             padding: 14px;
             margin-bottom: 12px;
             border-left: 4px solid #ffd700;
-            animation: fadeUp 0.6s ease-out;
         }
         .news-item .date { color: #8b949e; font-size: 12px; }
         .news-item .text { color: #f0f6fc; font-size: 14px; line-height: 1.6; margin-top: 4px; }
 
-        @keyframes fadeUp {
-            from { opacity: 0; transform: translateY(15px); }
-            to { opacity: 1; transform: translateY(0); }
+        .bonus-block {
+            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 140, 0, 0.05));
+            border: 1px solid rgba(255, 215, 0, 0.2);
+            border-radius: 16px;
+            padding: 16px;
+            text-align: center;
+            margin-bottom: 16px;
         }
+        .bonus-block .timer { font-size: 20px; font-weight: 700; color: #ffd700; margin: 8px 0; }
+        .bonus-block .sub { color: #8b949e; font-size: 12px; }
 
         .btn {
             display: block;
@@ -70,34 +82,13 @@
             margin-top: 12px;
             transition: all 0.3s;
         }
-        .btn:hover {
-            transform: scale(1.02);
-            box-shadow: 0 4px 20px rgba(255, 215, 0, 0.15);
-        }
+        .btn:hover { transform: scale(1.02); }
 
         .btn-secondary {
             background: rgba(255, 255, 255, 0.08);
             color: #f0f6fc;
             border: 1px solid rgba(255, 255, 255, 0.08);
         }
-
-        .link { color: #58a6ff; text-decoration: none; }
-        .footer {
-            text-align: center;
-            color: #8b949e;
-            font-size: 12px;
-            padding: 30px 0 10px;
-        }
-
-        .skeleton {
-            background: linear-gradient(90deg, rgba(22,27,34,0.7) 25%, rgba(255,255,255,0.05) 50%, rgba(22,27,34,0.7) 75%);
-            background-size: 200% 100%;
-            animation: shimmer 1.5s infinite;
-            border-radius: 8px;
-            height: 16px;
-            width: 60px;
-        }
-        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
 
         .package-item {
             display: flex;
@@ -108,6 +99,20 @@
         }
         .package-item:last-child { border-bottom: none; }
         .package-item .price { color: #ffd700; font-weight: 600; }
+
+        .stat-row {
+            display: flex;
+            justify-content: space-between;
+            padding: 6px 0;
+        }
+        .stat-row .value.gold { color: #ffd700; }
+
+        .link { color: #58a6ff; text-decoration: none; }
+        .footer { text-align: center; color: #8b949e; font-size: 12px; padding: 30px 0 10px; }
+
+        /* Skeleton для загрузки */
+        .skeleton { background: linear-gradient(90deg, rgba(22,27,34,0.7) 25%, rgba(255,255,255,0.05) 50%, rgba(22,27,34,0.7) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 8px; height: 16px; width: 60px; }
+        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     </style>
 </head>
 <body>
@@ -116,7 +121,18 @@
         <p>Магазин Telegram Stars</p>
     </div>
 
-    <!-- НОВОСТИ (загружаются из JSON) -->
+    <!-- БОНУС (с таймером) -->
+    <div class="bonus-block" id="bonusBlock">
+        <div style="display: flex; justify-content: space-between; align-items: center;">
+            <span style="font-weight: 600;">🎁 Ежедневный бонус</span>
+            <span style="color: #ffd700; font-weight: 600; font-size: 14px;">+0.1 TRX</span>
+        </div>
+        <div class="timer" id="bonusTimer">00:00:00</div>
+        <div class="sub">До следующего бонуса</div>
+        <button class="btn btn-secondary" id="bonusBtn" style="margin-top: 10px;">💎 Забрать бонус</button>
+    </div>
+
+    <!-- НОВОСТИ -->
     <div class="card">
         <h3 style="margin-bottom: 12px;">📢 Новости</h3>
         <div id="newsContainer">
@@ -132,30 +148,25 @@
         <div class="package-item"><span>300 звёзд</span><span class="price">5.0 TRX</span></div>
         <div class="package-item"><span>500 звёзд</span><span class="price">7.5 TRX</span></div>
         <div class="package-item"><span>1000 звёзд</span><span class="price">15.0 TRX</span></div>
-        <a href="https://t.me/StarWavesBuyBot" class="btn">🛒 Купить в боте</a>
+        <a href="https://t.me/StarWavesBuyBot" class="btn btn-glow">🛒 Купить в боте</a>
     </div>
 
-    <!-- СТАТИСТИКА (заглушка) -->
+    <!-- СТАТИСТИКА (счётчик звёзд) -->
     <div class="card">
         <h3 style="margin-bottom: 12px;">📊 Статистика</h3>
-        <div style="display: flex; justify-content: space-between; padding: 6px 0;"><span>Всего покупок</span><span style="color: #ffd700;">42</span></div>
-        <div style="display: flex; justify-content: space-between; padding: 6px 0;"><span>Продано звёзд</span><span style="color: #ffd700;">5,200 ⭐</span></div>
-        <div style="display: flex; justify-content: space-between; padding: 6px 0;"><span>Выручка</span><span style="color: #ffd700;">$124.50</span></div>
-    </div>
-
-    <!-- СВЯЗЬ -->
-    <div class="card">
-        <h3 style="margin-bottom: 12px;">💬 Связь</h3>
-        <p style="color: #8b949e;">Напиши администратору: <a href="https://t.me/ArchibaldNn" class="link">@ArchibaldNn</a></p>
+        <div class="stat-row"><span>Покупателей</span><span class="value gold" id="totalBuyers">—</span></div>
+        <div class="stat-row"><span>Продано звёзд</span><span class="value gold" id="totalStarsSold">—</span></div>
+        <div class="stat-row"><span>Выручка</span><span class="value gold" id="totalRevenue">—</span></div>
     </div>
 
     <div class="footer">StarWaves © 2026</div>
 
     <script>
+        // ===== ЗАГРУЗКА НОВОСТЕЙ =====
         async function loadNews() {
             try {
-                const response = await fetch('news.json');
-                const news = await response.json();
+                const res = await fetch('news.json');
+                const news = await res.json();
                 const container = document.getElementById('newsContainer');
                 container.innerHTML = '';
                 news.forEach(item => {
@@ -168,7 +179,59 @@
                 document.getElementById('newsContainer').innerHTML = '<p style="color: #ff6b6b;">⚠️ Ошибка загрузки новостей</p>';
             }
         }
-        document.addEventListener('DOMContentLoaded', loadNews);
+
+        // ===== ЗАГРУЗКА СТАТИСТИКИ =====
+        async function loadStats() {
+            try {
+                const res = await fetch('stats.json');
+                const stats = await res.json();
+                document.getElementById('totalStarsSold').textContent = (stats.stars_sold || 0) + ' ⭐';
+            } catch (e) {
+                document.getElementById('totalStarsSold').textContent = '—';
+            }
+        }
+
+        // ===== ТАЙМЕР БОНУСА (до следующего дня) =====
+        function updateTimer() {
+            const now = new Date();
+            const tomorrow = new Date(now);
+            tomorrow.setDate(tomorrow.getDate() + 1);
+            tomorrow.setHours(0, 0, 0, 0);
+            const diff = tomorrow - now;
+            const h = String(Math.floor(diff / (1000 * 60 * 60))).padStart(2, '0');
+            const m = String(Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))).padStart(2, '0');
+            const s = String(Math.floor((diff % (1000 * 60)) / 1000)).padStart(2, '0');
+            document.getElementById('bonusTimer').textContent = `${h}:${m}:${s}`;
+        }
+
+        // ===== КНОПКА БОНУСА =====
+        document.getElementById('bonusBtn').addEventListener('click', function() {
+            const lastClaim = localStorage.getItem('lastBonusClaim');
+            const today = new Date().toDateString();
+            if (lastClaim === today) {
+                alert('❌ Ты уже забрал бонус сегодня! Приходи завтра.');
+                return;
+            }
+            // Начисление бонуса (сохраняем в localStorage)
+            localStorage.setItem('lastBonusClaim', today);
+            let balance = parseFloat(localStorage.getItem('trxBalance') || '0');
+            balance += 0.1;
+            localStorage.setItem('trxBalance', balance.toFixed(2));
+            alert('🎉 Бонус зачислен! +0.1 TRX');
+            location.reload();
+        });
+
+        // ===== ПОКАЗ БАЛАНСА =====
+        const balance = localStorage.getItem('trxBalance') || '0.00';
+        document.querySelector('.bonus-block .sub').textContent = `💰 Баланс: ${balance} TRX`;
+
+        // ===== ЗАПУСК =====
+        document.addEventListener('DOMContentLoaded', () => {
+            loadNews();
+            loadStats();
+            updateTimer();
+            setInterval(updateTimer, 1000);
+        });
     </script>
 </body>
-                                                            </html>
+</html>
