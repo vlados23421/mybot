@@ -11,6 +11,7 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
 NETLIFY_TOKEN = os.getenv("NETLIFY_TOKEN")
+RENDER_EXTERNAL_URL = os.getenv("RENDER_EXTERNAL_URL")
 
 # ===== БАЗА ДАННЫХ =====
 async def init_db():
@@ -61,7 +62,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_keyboard
     )
 
-# ===== КОМАНДА /WEB (открывает Web App) =====
+# ===== КОМАНДА /WEB =====
 async def webapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌐 **Открыть Web App**\n\n"
@@ -72,7 +73,7 @@ async def webapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# ===== КОМАНДА /ADDNEWS (добавить новость в Web App) =====
+# ===== КОМАНДА /ADDNEWS (с тегами) =====
 async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа!")
@@ -81,15 +82,27 @@ async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     args = context.args
     if not args:
         await update.message.reply_text(
-            "❌ Используй: /addnews Текст новости\n"
-            "Пример: /addnews Мы добавили новый пакет звёзд!"
+            "❌ Используй: /addnews [ТЕГ] Текст новости\n"
+            "Примеры:\n"
+            "/addnews NEW Мы добавили новый пакет звёзд!\n"
+            "/addnews UPDATE Цены снижены!\n"
+            "/addnews EVENT Завтра розыгрыш!"
         )
         return
     
-    text = " ".join(args)
-    today = datetime.now().strftime("%d %B %Y")
+    # Парсим тег и текст
+    tag = "NEW"  # По умолчанию
+    if len(args) > 1 and args[0].upper() in ["NEW", "UPDATE", "EVENT"]:
+        tag = args[0].upper()
+        text = " ".join(args[1:])
+    else:
+        text = " ".join(args)
     
-    # 1. Получаем текущий файл новостей с Netlify
+    today = datetime.now().strftime("%d %B %Y")
+    # Форматируем тег в HTML
+    tag_html = f"<span style='background: #ffd700; color: #0d1117; padding: 2px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; margin-right: 6px;'>{tag}</span>"
+    
+    # 1. Загружаем текущие новости
     async with aiohttp.ClientSession() as session:
         async with session.get("https://super-otter-0ce531.netlify.app/news.json") as resp:
             if resp.status == 200:
@@ -101,10 +114,10 @@ async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     news.append({
         "id": len(news) + 1,
         "date": today,
-        "text": text
+        "text": f"{tag_html}{text}"
     })
     
-    # 3. Записываем обновлённый файл обратно на Netlify через их API
+    # 3. Сохраняем на Netlify
     site_id = "super-otter-0ce531"
     headers = {
         "Authorization": f"Bearer {NETLIFY_TOKEN}",
@@ -112,31 +125,52 @@ async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     }
     
     async with aiohttp.ClientSession() as session:
-        async with session.get(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers) as resp:
+        async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers, json=news) as resp:
             if resp.status == 200:
-                # Файл существует, обновляем его
-                async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers, json=news) as put_resp:
-                    if put_resp.status == 200:
-                        await update.message.reply_text(
-                            f"✅ **Новость добавлена!**\n"
-                            f"📅 {today}\n"
-                            f"📝 {text}\n\n"
-                            f"🌐 Открой Web App, чтобы увидеть её."
-                        )
-                    else:
-                        await update.message.reply_text("❌ Ошибка при обновлении файла на сервере.")
+                await update.message.reply_text(
+                    f"✅ **Новость добавлена!**\n"
+                    f"📅 {today}\n"
+                    f"🏷️ {tag}\n"
+                    f"📝 {text}\n\n"
+                    f"🌐 Открой Web App, чтобы увидеть её."
+                )
             else:
-                # Создаём файл, если его нет
-                async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers, json=news) as put_resp:
-                    if put_resp.status == 200:
-                        await update.message.reply_text(
-                            f"✅ **Новость добавлена!**\n"
-                            f"📅 {today}\n"
-                            f"📝 {text}\n\n"
-                            f"🌐 Открой Web App, чтобы увидеть её."
-                        )
-                    else:
-                        await update.message.reply_text("❌ Ошибка при создании файла на сервере.")
+                await update.message.reply_text("❌ Ошибка при сохранении на сервере.")
+
+# ===== КОМАНДА /ADDSTATS =====
+async def add_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Только для админа!")
+        return
+    
+    args = context.args
+    if not args or not args[0].isdigit():
+        await update.message.reply_text("❌ Используй: /addstats количество_звёзд\nПример: /addstats 500")
+        return
+    
+    # Загружаем текущую статистику
+    async with aiohttp.ClientSession() as session:
+        async with session.get("https://super-otter-0ce531.netlify.app/stats.json") as resp:
+            if resp.status == 200:
+                stats = await resp.json()
+            else:
+                stats = {"stars_sold": 0}
+    
+    # Обновляем
+    stats["stars_sold"] += int(args[0])
+    
+    # Сохраняем на Netlify
+    site_id = "super-otter-0ce531"
+    headers = {
+        "Authorization": f"Bearer {NETLIFY_TOKEN}",
+        "Content-Type": "application/json"
+    }
+    async with aiohttp.ClientSession() as session:
+        async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/stats.json", headers=headers, json=stats) as resp:
+            if resp.status == 200:
+                await update.message.reply_text(f"✅ Статистика обновлена! ⭐ Продано звёзд: {stats['stars_sold']}")
+            else:
+                await update.message.reply_text("❌ Ошибка при обновлении статистики.")
 
 # ===== КУПИТЬ ЗВЁЗДЫ =====
 async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -168,7 +202,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 "price_amount": price,
                 "price_currency": "usd",
                 "pay_currency": "trx",
-                "ipn_callback_url": f"https://{os.getenv('RENDER_EXTERNAL_URL')}/ipn",
+                "ipn_callback_url": f"https://{RENDER_EXTERNAL_URL}/ipn",
                 "order_id": f"stars_{stars}_{update.effective_user.id}",
                 "order_description": f"Покупка {stars} Telegram Stars"
             }
@@ -245,7 +279,7 @@ async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
         parse_mode='Markdown'
     )
 
-# ===== IPN WEBHOOK (для NOWPayments) =====
+# ===== IPN WEBHOOK =====
 async def ipn_webhook(request):
     try:
         data = await request.json()
@@ -263,6 +297,7 @@ async def ipn_webhook(request):
     except:
         return web.Response(text="OK")
 
+# ===== ВЕБ-СЕРВЕР =====
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/health', health_check)
@@ -284,10 +319,11 @@ async def main():
     application.add_handler(CommandHandler("start", start))
     application.add_handler(CommandHandler("web", webapp_command))
     application.add_handler(CommandHandler("addnews", add_news_command))
+    application.add_handler(CommandHandler("addstats", add_stats_command))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^buy_"))
     application.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves с авто-новостями запущен!")
+    print("🚀 StarWaves с новостями и статистикой запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
@@ -303,8 +339,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await my_purchases(update, context)
     elif text == "📞 Поддержка":
         await support(update, context)
-    elif text == "📊 Статистика продаж" and user_id == ADMIN_ID:
-        await admin_stats(update, context)
 
 if __name__ == "__main__":
     asyncio.run(main())
