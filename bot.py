@@ -62,18 +62,18 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         reply_markup=main_keyboard
     )
 
-# ===== КОМАНДА /WEB =====
+# ===== КОМАНДА /WEB (открывает Web App) =====
 async def webapp_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text(
         "🌐 **Открыть Web App**\n\n"
         "Нажми кнопку ниже, чтобы открыть магазин StarWaves:",
         reply_markup=InlineKeyboardMarkup([
-            [InlineKeyboardButton("🌐 Открыть Web App", web_app=WebAppInfo(url="https://super-otter-0ce531.netlify.app/"))]
+            [InlineKeyboardButton("🌐 Открыть Web App", web_app=WebAppInfo(url="https://starwaybuy.netlify.app/"))]
         ]),
         parse_mode='Markdown'
     )
 
-# ===== КОМАНДА /ADDNEWS (с тегами) =====
+# ===== КОМАНДА /ADDNEWS =====
 async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
     if update.effective_user.id != ADMIN_ID:
         await update.message.reply_text("⛔ Только для админа!")
@@ -90,8 +90,7 @@ async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         return
     
-    # Парсим тег и текст
-    tag = "NEW"  # По умолчанию
+    tag = "NEW"
     if len(args) > 1 and args[0].upper() in ["NEW", "UPDATE", "EVENT"]:
         tag = args[0].upper()
         text = " ".join(args[1:])
@@ -99,30 +98,23 @@ async def add_news_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         text = " ".join(args)
     
     today = datetime.now().strftime("%d %B %Y")
-    # Форматируем тег в HTML
     tag_html = f"<span style='background: #ffd700; color: #0d1117; padding: 2px 10px; border-radius: 12px; font-size: 10px; font-weight: 700; margin-right: 6px;'>{tag}</span>"
     
-    # 1. Загружаем текущие новости
     async with aiohttp.ClientSession() as session:
-        async with session.get("https://super-otter-0ce531.netlify.app/news.json") as resp:
+        async with session.get("https://starwaybuy.netlify.app/news.json") as resp:
             if resp.status == 200:
                 news = await resp.json()
             else:
                 news = []
     
-    # 2. Добавляем новую запись
     news.append({
         "id": len(news) + 1,
         "date": today,
         "text": f"{tag_html}{text}"
     })
     
-    # 3. Сохраняем на Netlify
-    site_id = "super-otter-0ce531"
-    headers = {
-        "Authorization": f"Bearer {NETLIFY_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    site_id = "starwaybuy"
+    headers = {"Authorization": f"Bearer {NETLIFY_TOKEN}", "Content-Type": "application/json"}
     
     async with aiohttp.ClientSession() as session:
         async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/news.json", headers=headers, json=news) as resp:
@@ -148,23 +140,17 @@ async def add_stats_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text("❌ Используй: /addstats количество_звёзд\nПример: /addstats 500")
         return
     
-    # Загружаем текущую статистику
     async with aiohttp.ClientSession() as session:
-        async with session.get("https://super-otter-0ce531.netlify.app/stats.json") as resp:
+        async with session.get("https://starwaybuy.netlify.app/stats.json") as resp:
             if resp.status == 200:
                 stats = await resp.json()
             else:
                 stats = {"stars_sold": 0}
     
-    # Обновляем
     stats["stars_sold"] += int(args[0])
     
-    # Сохраняем на Netlify
-    site_id = "super-otter-0ce531"
-    headers = {
-        "Authorization": f"Bearer {NETLIFY_TOKEN}",
-        "Content-Type": "application/json"
-    }
+    site_id = "starwaybuy"
+    headers = {"Authorization": f"Bearer {NETLIFY_TOKEN}", "Content-Type": "application/json"}
     async with aiohttp.ClientSession() as session:
         async with session.put(f"https://api.netlify.com/api/v1/sites/{site_id}/files/stats.json", headers=headers, json=stats) as resp:
             if resp.status == 200:
@@ -297,7 +283,6 @@ async def ipn_webhook(request):
     except:
         return web.Response(text="OK")
 
-# ===== ВЕБ-СЕРВЕР =====
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/health', health_check)
@@ -323,7 +308,7 @@ async def main():
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^buy_"))
     application.add_handler(CallbackQueryHandler(check_payment, pattern="^check_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves с новостями и статистикой запущен!")
+    print("🚀 StarWaves запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
