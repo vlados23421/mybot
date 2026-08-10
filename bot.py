@@ -93,7 +93,6 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data.startswith("buy_"):
         stars = int(data.replace("buy_", ""))
-        # Цена в Telegram Stars (XTR). 1 TRX = 1 XTR для удобства
         price = stars  # 1 звезда = 1 XTR
         await context.bot.send_invoice(
             chat_id=update.effective_user.id,
@@ -116,6 +115,18 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"✅ **Покупка завершена!**\n"
         f"⭐ {stars} звёзд зачислены на твой баланс.\n"
         f"💰 Оплачено: {stars} XTR",
+        parse_mode='Markdown'
+    )
+
+# ===== АДМИНКА =====
+async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if update.effective_user.id != ADMIN_ID:
+        await update.message.reply_text("⛔ Нет доступа")
+        return
+    await update.message.reply_text(
+        "👑 **Админ-панель**\n\n"
+        "Выбери действие:",
+        reply_markup=admin_keyboard,
         parse_mode='Markdown'
     )
 
@@ -156,12 +167,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "👑 Админка" and user_id == ADMIN_ID:
-        await update.message.reply_text(
-            "👑 **Админ-панель**\n\n"
-            "Выбери действие:",
-            reply_markup=admin_keyboard,
-            parse_mode='Markdown'
-        )
+        await adminka_command(update, context)
         return
 
     if user_id == ADMIN_ID:
