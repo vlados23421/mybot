@@ -1,286 +1,185 @@
 import os
 import asyncio
+from random import randint
 from aiohttp import web
-from datetime import datetime
 from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes, PreCheckoutQueryHandler
+from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
-from database import init_db, get_user, register_user, add_balance, get_balance, add_purchase, create_promo, validate_promo, use_promo, get_purchases
+from database import (
+    init_db, get_player, create_player, update_player_stats,
+    get_top_players, get_total_players,
+    get_guild, get_guild_by_leader, create_guild, join_guild,
+    get_guild_members, get_top_guilds, add_pvp_battle
+)
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
+CHANNEL_ID = "@CoinFlowNews"
 
+# ===== КЛАВИАТУРЫ =====
 main_keyboard = ReplyKeyboardMarkup([
-    ["⭐ Купить звёзды", "📦 История"],
-    ["📝 Отзывы", "📞 Поддержка"],
-    ["👑 Админка"]
+    ["🧙 Профиль", "⚔️ Квесты"],
+    ["🏆 Гильдии", "⚡ PvP"],
+    ["📢 Ивенты", "📞 Поддержка"]
 ], resize_keyboard=True)
 
-admin_keyboard = ReplyKeyboardMarkup([
-    ["📊 Статистика", "💰 Пополнить баланс"],
-    ["🎟️ Создать промокод", "📜 История операций"],
-    ["🔙 Выйти из админки"]
-], resize_keyboard=True)
-
+# ===== СТАРТ =====
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await init_db()
     user = update.effective_user
-    user_id = user.id
-    username = user.username or "Пользователь"
+    await create_player(user.id, user.username or "Без имени")
+    player = await get_player(user.id)
+    guild = None
+    if player['guild_id']:
+        guild = await get_guild(player['guild_id'])
     
-    user_data = await get_user(user_id)
-    is_new = user_data is None
+    text = f"⚔️ **Добро пожаловать в мир приключений!**\n\n"
+    text += f"🧙 Уровень: {player['level']}\n"
+    text += f"⭐ Опыт: {player['exp']} / {player['level'] * 100}\n"
+    text += f"💰 Золото: {player['gold']}\n"
+    text += f"⚡ Энергия: {player['energy']}\n"
+    if guild:
+        text += f"🏆 Гильдия: {guild['name']}\n"
     
-    await register_user(user_id, username)
-    balance = await get_balance(user_id)
-    user_data = await get_user(user_id)
-    
-    if is_new:
-        await update.message.reply_text(
-            f"🌟 **Добро пожаловать в StarWaves!** 🎉\n\n"
-            f"Ты только что присоединился к нашему сообществу!\n"
-            f"💰 Твой баланс: {balance} XTR\n"
-            f"⭐ Всего звёзд: {user_data['total_stars']}\n\n"
-            f"Здесь ты можешь купить Telegram Stars по лучшей цене.\n"
-            f"📌 Подпишись на наш канал: @CoinFlowNews",
-            parse_mode='Markdown',
-            reply_markup=main_keyboard
-        )
-    else:
-        await update.message.reply_text(
-            f"🌟 **Добро пожаловать в StarWaves!**\n\n"
-            f"💰 Твой баланс: {balance} XTR\n"
-            f"⭐ Всего звёзд: {user_data['total_stars']}\n\n"
-            f"Здесь ты можешь купить Telegram Stars по лучшей цене.",
-            parse_mode='Markdown',
-            reply_markup=main_keyboard
-        )
+    await update.message.reply_text(text, parse_mode='Markdown', reply_markup=main_keyboard)
 
-async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
+# ===== ПРОФИЛЬ =====
+async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    player = await get_player(update.effective_user.id)
+    guild = None
+    if player['guild_id']:
+        guild = await get_guild(player['guild_id'])
+    text = f"🧙 **Твой профиль**\n\n"
+    text += f"👤 Имя: {player['username']}\n"
+    text += f"📈 Уровень: {player['level']}\n"
+    text += f"⭐ Опыт: {player['exp']} / {player['level'] * 100}\n"
+    text += f"💰 Золото: {player['gold']}\n"
+    text += f"⚡ Энергия: {player['energy']}\n"
+    if guild:
+        text += f"🏆 Гильдия: {guild['name']}\n"
+    await update.message.reply_text(text, parse_mode='Markdown')
+
+# ===== КВЕСТЫ =====
+async def quests(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ 50 звёзд (50 XTR)", callback_data="buy_50")],
-        [InlineKeyboardButton("⭐ 150 звёзд (150 XTR)", callback_data="buy_150")],
-        [InlineKeyboardButton("⭐ 300 звёзд (300 XTR)", callback_data="buy_300")],
-        [InlineKeyboardButton("⭐ 500 звёзд (500 XTR)", callback_data="buy_500")],
-        [InlineKeyboardButton("⭐ 1000 звёзд (1000 XTR)", callback_data="buy_1000")],
-        [InlineKeyboardButton("✏️ Своё количество", callback_data="custom")],
-        [InlineKeyboardButton("🔙 Назад", callback_data="back_main")]
+        [InlineKeyboardButton("🌲 Поход в лес", callback_data="quest_1")],
+        [InlineKeyboardButton("🏔️ Подземелье", callback_data="quest_2")],
+        [InlineKeyboardButton("🔄 Восстановить энергию", callback_data="restore")]
     ])
     await update.message.reply_text(
-        "🌟 **Выбери пакет или введи своё количество:**\n\n"
-        "💳 Оплата через Telegram Stars (карта, Google Pay / Apple Pay)",
+        "⚔️ **Выбери квест:**\n\n"
+        "🌲 Поход в лес — +50 опыта, +20 золота (20 энергии)\n"
+        "🏔️ Подземелье — +100 опыта, +50 золота (40 энергии)",
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
 
-async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+async def quest_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     query = update.callback_query
     await query.answer()
     data = query.data
-    
-    if data == "back_main":
-        await start(update, context)
-        return
-    
-    if data == "custom":
-        await query.edit_message_text(
-            "✏️ **Введи количество звёзд, которое хочешь купить:**\n\n"
-            "Например: 200\n"
-            "Цена будет рассчитана автоматически.\n"
-            "💰 Оплата через Telegram Stars.",
-            parse_mode='Markdown'
-        )
-        context.user_data['custom_stars'] = True
-        return
-    
-    if data.startswith("buy_"):
-        stars = int(data.replace("buy_", ""))
-        price = stars
-        await context.bot.send_invoice(
-            chat_id=update.effective_user.id,
-            title=f"{stars} ⭐",
-            description=f"Покупка {stars} звёзд в StarWaves",
-            payload=f"stars_{stars}",
-            currency="XTR",
-            prices=[{"label": f"{stars} Stars", "amount": price}]
-        )
-
-async def pre_checkout(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.pre_checkout_query.answer(ok=True)
-
-async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    payload = update.message.successful_payment.invoice_payload
-    stars = int(payload.replace("stars_", ""))
     user_id = update.effective_user.id
-    await add_purchase(user_id, stars, stars)
+    player = await get_player(user_id)
+    
+    if data == "restore":
+        await query.edit_message_text("⚡ Энергия восстановлена! (заглушка)")
+        return
+    
+    cost = 20 if data == "quest_1" else 40
+    if player['energy'] < cost:
+        await query.edit_message_text("❌ Недостаточно энергии! Нажми «Восстановить».")
+        return
+    
+    exp = 50 if data == "quest_1" else 100
+    gold = 20 if data == "quest_1" else 50
+    await update_player_stats(user_id, exp, gold, cost)
+    player = await get_player(user_id)
+    await query.edit_message_text(
+        f"✅ **Квест выполнен!**\n"
+        f"⭐ +{exp} опыта\n"
+        f"💰 +{gold} золота\n"
+        f"📈 Уровень: {player['level']}\n"
+        f"⚡ Осталось энергии: {player['energy']}"
+    )
+
+# ===== ГИЛЬДИИ =====
+async def guilds(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("➕ Создать гильдию", callback_data="guild_create")],
+        [InlineKeyboardButton("📋 Топ гильдий", callback_data="guild_top")]
+    ])
     await update.message.reply_text(
-        f"✅ **Покупка завершена!**\n"
-        f"⭐ {stars} звёзд зачислены на твой баланс.\n"
-        f"💰 Оплачено: {stars} XTR",
+        "🏆 **Гильдии:**\n\nСоздай свою гильдию или вступи в топовую!",
+        reply_markup=keyboard,
         parse_mode='Markdown'
     )
 
+async def guild_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    user_id = update.effective_user.id
+    
+    if data == "guild_create":
+        await query.edit_message_text(
+            "🏆 **Введи название гильдии:**\n\n"
+            "Например: «Драконы»"
+        )
+        context.user_data['creating_guild'] = True
+        return
+    
+    if data == "guild_top":
+        top = await get_top_guilds()
+        text = "📋 **Топ гильдий:**\n\n"
+        for i, g in enumerate(top[:5], 1):
+            text += f"{i}. {g['name']} — {g['members']} участников\n"
+        await query.edit_message_text(text, parse_mode='Markdown')
+
+async def create_guild_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    if context.user_data.get('creating_guild'):
+        name = update.message.text
+        user_id = update.effective_user.id
+        guild_id = await create_guild(name, user_id)
+        context.user_data['creating_guild'] = False
+        await update.message.reply_text(f"🏆 Гильдия **{name}** создана! ID: {guild_id}")
+
+# ===== PVP =====
+async def pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    user_id = update.effective_user.id
+    conn = None  # Используем базу данных через функции
+    opponents = None  # Временно убираем поиск для стабильности
+    await update.message.reply_text("⚡ PvP-арена будет доступна в следующем обновлении!")
+    return
+
+# ===== ИВЕНТЫ =====
+async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    total = await get_total_players()
+    await update.message.reply_text(
+        f"📢 **Ивенты:**\n\n"
+        f"🔥 Эпический квест этой недели: «Охота на дракона»\n"
+        f"👥 Выполни квест в канале и получи эксклюзивный скин!\n\n"
+        f"📊 Всего игроков: {total}"
+    )
+
+# ===== ОБРАБОТЧИК =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
-    user_id = update.effective_user.id
+    if text == "🧙 Профиль":
+        await profile(update, context)
+    elif text == "⚔️ Квесты":
+        await quests(update, context)
+    elif text == "🏆 Гильдии":
+        await guilds(update, context)
+    elif text == "⚡ PvP":
+        await pvp(update, context)
+    elif text == "📢 Ивенты":
+        await events(update, context)
+    elif text == "📞 Поддержка":
+        await update.message.reply_text("📞 Свяжись с администратором: @ArchibaldNn")
+    elif context.user_data.get('creating_guild'):
+        await create_guild_handler(update, context)
 
-    if text == "📦 История":
-        rows = await get_purchases(user_id)
-        if not rows:
-            await update.message.reply_text("📭 У тебя пока нет покупок.")
-            return
-        output = "📦 **История покупок:**\n\n"
-        for r in rows:
-            output += f"⭐ {r['stars']} звёзд — {r['price']} XTR"
-            if r['promo_code']:
-                output += f" (промокод: {r['promo_code']})"
-            output += "\n"
-        await update.message.reply_text(output, parse_mode='Markdown')
-        return
-
-    if text == "📝 Отзывы":
-        await update.message.reply_text(
-            "📝 **Оставь отзыв о StarWaves!**\n\n"
-            "Твоё мнение помогает нам становиться лучше!\n"
-            "👉 Оставь отзыв здесь: https://forms.gle/твоя_ссылка_на_форму",
-            parse_mode='Markdown'
-        )
-        return
-
-    if text == "📞 Поддержка":
-        await update.message.reply_text(
-            "📞 **Поддержка StarWaves**\n\n"
-            "Если у тебя есть вопросы, проблемы или предложения, свяжись с администратором:\n"
-            "👑 @ArchibaldNn",
-            parse_mode='Markdown'
-        )
-        return
-
-    if text == "👑 Админка" and user_id == ADMIN_ID:
-        await update.message.reply_text(
-            "👑 **Админ-панель**\n\n"
-            "Выбери действие:",
-            reply_markup=admin_keyboard,
-            parse_mode='Markdown'
-        )
-        return
-
-    if user_id == ADMIN_ID:
-        if text == "📊 Статистика":
-            conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-            total_users = await conn.fetchval("SELECT COUNT(*) FROM users")
-            total_stars = await conn.fetchval("SELECT SUM(total_stars) FROM users") or 0
-            total_balance = await conn.fetchval("SELECT SUM(balance) FROM users") or 0
-            await conn.close()
-            await update.message.reply_text(
-                f"📊 **Статистика:**\n\n"
-                f"👥 Пользователей: {total_users}\n"
-                f"⭐ Продано звёзд: {total_stars}\n"
-                f"💰 Баланс системы: {total_balance} XTR",
-                parse_mode='Markdown'
-            )
-            return
-        if text == "💰 Пополнить баланс":
-            await update.message.reply_text(
-                "💰 **Введи ID пользователя и сумму через пробел:**\n"
-                "Пример: 123456789 5.0"
-            )
-            context.user_data['admin_balance_mode'] = True
-            return
-        if text == "🎟️ Создать промокод":
-            await update.message.reply_text(
-                "🎟️ **Введи данные промокода через пробел:**\n"
-                "Формат: КОД СКИДКА [ЛИМИТ]\n"
-                "Пример: STAR10 10 50"
-            )
-            context.user_data['admin_promo_mode'] = True
-            return
-        if text == "📜 История операций":
-            conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
-            rows = await conn.fetch("SELECT user_id, stars, price, promo_code, created_at FROM purchases ORDER BY created_at DESC LIMIT 10")
-            await conn.close()
-            if not rows:
-                await update.message.reply_text("📭 История операций пуста.")
-                return
-            output = "📜 **Последние 10 операций:**\n\n"
-            for r in rows:
-                output += f"👤 {r['user_id']} | ⭐ {r['stars']} | {r['price']} XTR"
-                if r['promo_code']:
-                    output += f" (промокод: {r['promo_code']})"
-                output += "\n"
-            await update.message.reply_text(output, parse_mode='Markdown')
-            return
-        if text == "🔙 Выйти из админки":
-            await update.message.reply_text("👋 Выход из админки.", reply_markup=main_keyboard)
-            return
-
-    if text.startswith("/ref"):
-        user_id = update.effective_user.id
-        ref_link = f"https://t.me/{context.bot.username}?start=ref_{user_id}"
-        await update.message.reply_text(
-            f"📤 **Пригласи друга и получи бонус!**\n\n"
-            f"Твоя уникальная ссылка:\n`{ref_link}`\n\n"
-            f"🔥 Если кто-то перейдёт по твоей ссылке и зарегистрируется,\n"
-            f"**оба получат +500 XTR**!",
-            parse_mode='Markdown'
-        )
-        return
-
-    if context.user_data.get('custom_stars'):
-        try:
-            stars = int(text)
-            if stars < 1 or stars > 10000:
-                await update.message.reply_text("❌ Введи число от 1 до 10000.")
-                return
-            price = stars
-            context.user_data['custom_stars'] = False
-            await context.bot.send_invoice(
-                chat_id=update.effective_user.id,
-                title=f"{stars} ⭐",
-                description=f"Покупка {stars} звёзд в StarWaves",
-                payload=f"stars_{stars}",
-                currency="XTR",
-                prices=[{"label": f"{stars} Stars", "amount": price}]
-            )
-        except:
-            await update.message.reply_text("❌ Введи число!")
-        return
-
-    if context.user_data.get('admin_balance_mode') and user_id == ADMIN_ID:
-        parts = text.split()
-        if len(parts) != 2:
-            await update.message.reply_text("❌ Неверный формат. Используй: ID Сумма")
-            return
-        try:
-            target_id = int(parts[0])
-            amount = float(parts[1])
-            await add_balance(target_id, amount)
-            context.user_data['admin_balance_mode'] = False
-            await update.message.reply_text(f"✅ Баланс пользователя {target_id} пополнен на {amount} XTR.")
-        except:
-            await update.message.reply_text("❌ Ошибка. Проверь ID и сумму.")
-        return
-
-    if context.user_data.get('admin_promo_mode') and user_id == ADMIN_ID:
-        parts = text.split()
-        if len(parts) < 2:
-            await update.message.reply_text("❌ Неверный формат. Используй: КОД СКИДКА [ЛИМИТ]")
-            return
-        code = parts[0].upper()
-        try:
-            discount = int(parts[1])
-            max_uses = int(parts[2]) if len(parts) > 2 else 100
-            await create_promo(code, discount, max_uses)
-            context.user_data['admin_promo_mode'] = False
-            await update.message.reply_text(f"✅ Промокод {code} создан! Скидка: {discount}%, лимит: {max_uses} использований.")
-        except:
-            await update.message.reply_text("❌ Ошибка. Проверь данные.")
-        return
-
-    if text == "⭐ Купить звёзды":
-        await buy_stars_menu(update, context)
-        return
-
+# ===== ВЕБ-СЕРВЕР =====
 async def start_web_server():
     app = web.Application()
     app.router.add_get('/health', lambda r: web.Response(text="OK"))
@@ -295,16 +194,14 @@ async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("ref", handle_message))
-    application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|custom|back_main)"))
-    application.add_handler(PreCheckoutQueryHandler(pre_checkout))
-    application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
+    application.add_handler(CallbackQueryHandler(quest_handler, pattern="^(quest_|restore)"))
+    application.add_handler(CallbackQueryHandler(guild_handler, pattern="^guild_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves запущен!")
+    await start_web_server()
+    print("🚀 Игровой бот запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
-    await start_web_server()
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
