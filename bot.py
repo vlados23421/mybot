@@ -6,15 +6,12 @@ from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKe
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
 from database import (
-    init_db, get_player, create_player, update_player_stats,
-    get_top_players, get_total_players,
-    get_guild, get_guild_by_leader, create_guild, join_guild,
-    get_guild_members, get_top_guilds, add_pvp_battle
+    init_db, get_player, create_player, update_player_stats, get_total_players,
+    get_guild, create_guild, get_top_guilds
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
 ADMIN_ID = int(os.getenv("ADMIN_ID"))
-CHANNEL_ID = "@CoinFlowNews"
 
 # ===== КЛАВИАТУРЫ =====
 main_keyboard = ReplyKeyboardMarkup([
@@ -82,7 +79,7 @@ async def quest_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player = await get_player(user_id)
     
     if data == "restore":
-        await query.edit_message_text("⚡ Энергия восстановлена! (заглушка)")
+        await query.edit_message_text("⚡ Энергия восстановлена!")
         return
     
     cost = 20 if data == "quest_1" else 40
@@ -145,19 +142,15 @@ async def create_guild_handler(update: Update, context: ContextTypes.DEFAULT_TYP
 
 # ===== PVP =====
 async def pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    user_id = update.effective_user.id
-    conn = None  # Используем базу данных через функции
-    opponents = None  # Временно убираем поиск для стабильности
     await update.message.reply_text("⚡ PvP-арена будет доступна в следующем обновлении!")
-    return
 
 # ===== ИВЕНТЫ =====
 async def events(update: Update, context: ContextTypes.DEFAULT_TYPE):
     total = await get_total_players()
     await update.message.reply_text(
         f"📢 **Ивенты:**\n\n"
-        f"🔥 Эпический квест этой недели: «Охота на дракона»\n"
-        f"👥 Выполни квест в канале и получи эксклюзивный скин!\n\n"
+        f"🔥 Текущий ивент: «Охота на дракона»\n"
+        f"Следи за новостями в канале!\n\n"
         f"📊 Всего игроков: {total}"
     )
 
@@ -197,11 +190,11 @@ async def main():
     application.add_handler(CallbackQueryHandler(quest_handler, pattern="^(quest_|restore)"))
     application.add_handler(CallbackQueryHandler(guild_handler, pattern="^guild_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    await start_web_server()
     print("🚀 Игровой бот запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
+    await start_web_server()
     await asyncio.Event().wait()
 
 if __name__ == "__main__":
