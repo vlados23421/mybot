@@ -305,6 +305,8 @@ async def main():
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|custom|back_main)"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("🚀 StarWaves запущен!")
+    # Отключаем локального бота, если он случайно запущен
+    await application.updater.stop()
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
