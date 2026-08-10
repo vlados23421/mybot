@@ -78,7 +78,6 @@ async def add_purchase(user_id, stars, price, promo=None):
     await conn.execute("UPDATE users SET total_stars = total_stars + $1 WHERE user_id = $2", stars, user_id)
     await conn.close()
 
-# ===== ПРОМОКОДЫ =====
 async def create_promo(code, discount, max_uses=100):
     conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
     await conn.execute(
@@ -162,7 +161,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data.startswith("buy_"):
         stars = int(data.replace("buy_", ""))
-        price = round(stars * 0.02, 2)  # 0.02 TRX за звезду
+        price = round(stars * 0.02, 2)
         await query.edit_message_text(
             f"💰 **К оплате:** {price} TRX\n"
             f"⭐ Звёзды: {stars}\n\n"
@@ -176,7 +175,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # История
     if text == "📦 История":
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         rows = await conn.fetch("SELECT stars, price, promo_code, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at DESC", user_id)
@@ -193,7 +191,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(output, parse_mode='Markdown')
         return
 
-    # Админка
     if user_id == ADMIN_ID:
         if text.startswith("/addbalance"):
             parts = text.split()
@@ -224,7 +221,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Используй: /createpromo КОД СКИДКА [МАКС_ИСПОЛЬЗОВАНИЙ]")
             return
 
-    # Кастомный ввод
     if context.user_data.get('custom_stars'):
         try:
             stars = int(text)
@@ -244,7 +240,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Введи число!")
         return
 
-    # Оплата с промокодом
     if context.user_data.get('pending_purchase'):
         parts = text.split()
         try:
@@ -274,7 +269,6 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         context.user_data['pending_purchase'] = None
         return
 
-    # Обычные кнопки
     if text == "⭐ Купить звёзды":
         await buy_stars_menu(update, context)
     elif text == "📞 Поддержка":
@@ -305,8 +299,6 @@ async def main():
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|custom|back_main)"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
     print("🚀 StarWaves запущен!")
-    # Отключаем локального бота, если он случайно запущен
-    await application.updater.stop()
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
