@@ -39,7 +39,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await update.message.reply_text(
             f"🌟 **Добро пожаловать в StarWaves!** 🎉\n\n"
             f"Ты только что присоединился к нашему сообществу!\n"
-            f"💰 Твой баланс: {balance} TRX\n"
+            f"💰 Твой баланс: {balance} XTR\n"
             f"⭐ Всего звёзд: {user_data['total_stars']}\n\n"
             f"Здесь ты можешь купить Telegram Stars по лучшей цене.\n"
             f"📌 Подпишись на наш канал: @CoinFlowNews",
@@ -49,7 +49,7 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     else:
         await update.message.reply_text(
             f"🌟 **Добро пожаловать в StarWaves!**\n\n"
-            f"💰 Твой баланс: {balance} TRX\n"
+            f"💰 Твой баланс: {balance} XTR\n"
             f"⭐ Всего звёзд: {user_data['total_stars']}\n\n"
             f"Здесь ты можешь купить Telegram Stars по лучшей цене.",
             parse_mode='Markdown',
@@ -58,16 +58,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
 
 async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("⭐ 50 звёзд (1.0 TRX)", callback_data="buy_50")],
-        [InlineKeyboardButton("⭐ 150 звёзд (3.0 TRX)", callback_data="buy_150")],
-        [InlineKeyboardButton("⭐ 300 звёзд (5.0 TRX)", callback_data="buy_300")],
-        [InlineKeyboardButton("⭐ 500 звёзд (7.5 TRX)", callback_data="buy_500")],
-        [InlineKeyboardButton("⭐ 1000 звёзд (15.0 TRX)", callback_data="buy_1000")],
+        [InlineKeyboardButton("⭐ 50 звёзд (50 XTR)", callback_data="buy_50")],
+        [InlineKeyboardButton("⭐ 150 звёзд (150 XTR)", callback_data="buy_150")],
+        [InlineKeyboardButton("⭐ 300 звёзд (300 XTR)", callback_data="buy_300")],
+        [InlineKeyboardButton("⭐ 500 звёзд (500 XTR)", callback_data="buy_500")],
+        [InlineKeyboardButton("⭐ 1000 звёзд (1000 XTR)", callback_data="buy_1000")],
         [InlineKeyboardButton("✏️ Своё количество", callback_data="custom")],
         [InlineKeyboardButton("🔙 Назад", callback_data="back_main")]
     ])
     await update.message.reply_text(
-        "🌟 **Выбери пакет или введи своё количество:**",
+        "🌟 **Выбери пакет или введи своё количество:**\n\n"
+        "💳 Оплата через Telegram Stars (карта, Google Pay / Apple Pay)",
         reply_markup=keyboard,
         parse_mode='Markdown'
     )
@@ -85,7 +86,8 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         await query.edit_message_text(
             "✏️ **Введи количество звёзд, которое хочешь купить:**\n\n"
             "Например: 200\n"
-            "Цена будет рассчитана автоматически.",
+            "Цена будет рассчитана автоматически.\n"
+            "💰 Оплата через Telegram Stars.",
             parse_mode='Markdown'
         )
         context.user_data['custom_stars'] = True
@@ -115,18 +117,6 @@ async def successful_payment(update: Update, context: ContextTypes.DEFAULT_TYPE)
         f"✅ **Покупка завершена!**\n"
         f"⭐ {stars} звёзд зачислены на твой баланс.\n"
         f"💰 Оплачено: {stars} XTR",
-        parse_mode='Markdown'
-    )
-
-# ===== АДМИНКА =====
-async def adminka_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if update.effective_user.id != ADMIN_ID:
-        await update.message.reply_text("⛔ Нет доступа")
-        return
-    await update.message.reply_text(
-        "👑 **Админ-панель**\n\n"
-        "Выбери действие:",
-        reply_markup=admin_keyboard,
         parse_mode='Markdown'
     )
 
@@ -167,7 +157,12 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         return
 
     if text == "👑 Админка" and user_id == ADMIN_ID:
-        await adminka_command(update, context)
+        await update.message.reply_text(
+            "👑 **Админ-панель**\n\n"
+            "Выбери действие:",
+            reply_markup=admin_keyboard,
+            parse_mode='Markdown'
+        )
         return
 
     if user_id == ADMIN_ID:
@@ -306,7 +301,7 @@ async def main():
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves с реальной оплатой через Google Play запущен!")
+    print("🚀 StarWaves с оплатой через Telegram Stars запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
