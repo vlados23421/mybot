@@ -1,33 +1,31 @@
 <!DOCTYPE html>
-<html lang="ru">
+<html>
 <head>
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0, maximum-scale=1.0, user-scalable=no">
     <title>StarWaves</title>
     <style>
+        /* ===== Цвета Telegram ===== */
+        :root {
+            --bg-color: var(--tg-theme-bg-color, #0a0d14);
+            --text-color: var(--tg-theme-text-color, #f0f6fc);
+            --secondary-bg: var(--tg-theme-secondary-bg-color, rgba(22, 27, 34, 0.7));
+            --accent: #ffd700;
+        }
+
         * { margin: 0; padding: 0; box-sizing: border-box; }
         body {
             font-family: -apple-system, BlinkMacSystemFont, 'Segoe UI', Roboto, Helvetica, Arial, sans-serif;
-            background: #0d1117;
-            color: #f0f6fc;
+            background: var(--bg-color);
+            color: var(--text-color);
             padding: 20px;
             min-height: 100vh;
         }
 
-        /* ===== АНИМАЦИЯ ПУЛЬСАЦИИ ===== */
-        @keyframes pulse {
-            0% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0.7); }
-            70% { box-shadow: 0 0 0 15px rgba(255, 215, 0, 0); }
-            100% { box-shadow: 0 0 0 0 rgba(255, 215, 0, 0); }
-        }
-        .btn-glow {
-            animation: pulse 2s infinite;
-        }
-
         .header { text-align: center; padding: 20px 0; }
         .header h1 {
-            font-size: 32px;
-            background: linear-gradient(135deg, #ffd700, #ff8c00);
+            font-size: 28px;
+            background: linear-gradient(135deg, var(--accent), #ff8c00);
             -webkit-background-clip: text;
             -webkit-text-fill-color: transparent;
             font-weight: 800;
@@ -35,9 +33,8 @@
         .header p { color: #8b949e; font-size: 14px; }
 
         .card {
-            background: rgba(22, 27, 34, 0.7);
-            border: 1px solid rgba(255, 255, 255, 0.08);
-            backdrop-filter: blur(12px);
+            background: var(--secondary-bg);
+            border: 1px solid rgba(255, 255, 255, 0.06);
             border-radius: 20px;
             padding: 18px;
             margin-bottom: 16px;
@@ -45,33 +42,33 @@
         }
         .card:hover { transform: translateY(-2px); }
 
-        .news-item {
-            background: rgba(255, 255, 255, 0.03);
-            border-radius: 12px;
-            padding: 14px;
-            margin-bottom: 12px;
-            border-left: 4px solid #ffd700;
+        .package-item {
+            display: flex;
+            justify-content: space-between;
+            align-items: center;
+            padding: 10px 0;
+            border-bottom: 1px solid rgba(255, 255, 255, 0.05);
         }
-        .news-item .date { color: #8b949e; font-size: 12px; }
-        .news-item .text { color: #f0f6fc; font-size: 14px; line-height: 1.6; margin-top: 4px; }
+        .package-item:last-child { border-bottom: none; }
+        .package-item .price { color: var(--accent); font-weight: 600; }
 
-        .bonus-block {
-            background: linear-gradient(135deg, rgba(255, 215, 0, 0.1), rgba(255, 140, 0, 0.05));
-            border: 1px solid rgba(255, 215, 0, 0.2);
-            border-radius: 16px;
-            padding: 16px;
-            text-align: center;
-            margin-bottom: 16px;
+        .custom-input {
+            width: 100%;
+            padding: 12px;
+            background: rgba(255, 255, 255, 0.05);
+            border: 1px solid rgba(255, 255, 255, 0.1);
+            border-radius: 10px;
+            color: var(--text-color);
+            font-size: 16px;
+            margin-top: 8px;
         }
-        .bonus-block .timer { font-size: 20px; font-weight: 700; color: #ffd700; margin: 8px 0; }
-        .bonus-block .sub { color: #8b949e; font-size: 12px; }
 
         .btn {
             display: block;
             width: 100%;
             padding: 16px;
-            background: linear-gradient(135deg, #ffd700, #ff8c00);
-            color: #0d1117;
+            background: linear-gradient(135deg, var(--accent), #ff8c00);
+            color: #0a0d14;
             border: none;
             border-radius: 14px;
             font-size: 16px;
@@ -84,35 +81,7 @@
         }
         .btn:hover { transform: scale(1.02); }
 
-        .btn-secondary {
-            background: rgba(255, 255, 255, 0.08);
-            color: #f0f6fc;
-            border: 1px solid rgba(255, 255, 255, 0.08);
-        }
-
-        .package-item {
-            display: flex;
-            justify-content: space-between;
-            align-items: center;
-            padding: 10px 0;
-            border-bottom: 1px solid rgba(255,255,255,0.05);
-        }
-        .package-item:last-child { border-bottom: none; }
-        .package-item .price { color: #ffd700; font-weight: 600; }
-
-        .stat-row {
-            display: flex;
-            justify-content: space-between;
-            padding: 6px 0;
-        }
-        .stat-row .value.gold { color: #ffd700; }
-
-        .link { color: #58a6ff; text-decoration: none; }
         .footer { text-align: center; color: #8b949e; font-size: 12px; padding: 30px 0 10px; }
-
-        /* Skeleton для загрузки */
-        .skeleton { background: linear-gradient(90deg, rgba(22,27,34,0.7) 25%, rgba(255,255,255,0.05) 50%, rgba(22,27,34,0.7) 75%); background-size: 200% 100%; animation: shimmer 1.5s infinite; border-radius: 8px; height: 16px; width: 60px; }
-        @keyframes shimmer { 0% { background-position: -200% 0; } 100% { background-position: 200% 0; } }
     </style>
 </head>
 <body>
@@ -121,26 +90,6 @@
         <p>Магазин Telegram Stars</p>
     </div>
 
-    <!-- БОНУС (с таймером) -->
-    <div class="bonus-block" id="bonusBlock">
-        <div style="display: flex; justify-content: space-between; align-items: center;">
-            <span style="font-weight: 600;">🎁 Ежедневный бонус</span>
-            <span style="color: #ffd700; font-weight: 600; font-size: 14px;">+0.1 TRX</span>
-        </div>
-        <div class="timer" id="bonusTimer">00:00:00</div>
-        <div class="sub">До следующего бонуса</div>
-        <button class="btn btn-secondary" id="bonusBtn" style="margin-top: 10px;">💎 Забрать бонус</button>
-    </div>
-
-    <!-- НОВОСТИ -->
-    <div class="card">
-        <h3 style="margin-bottom: 12px;">📢 Новости</h3>
-        <div id="newsContainer">
-            <p style="color: #8b949e;">Загрузка новостей...</p>
-        </div>
-    </div>
-
-    <!-- ПАКЕТЫ -->
     <div class="card">
         <h3 style="margin-bottom: 12px;">⭐ Популярные пакеты</h3>
         <div class="package-item"><span>50 звёзд</span><span class="price">1.0 TRX</span></div>
@@ -148,91 +97,41 @@
         <div class="package-item"><span>300 звёзд</span><span class="price">5.0 TRX</span></div>
         <div class="package-item"><span>500 звёзд</span><span class="price">7.5 TRX</span></div>
         <div class="package-item"><span>1000 звёзд</span><span class="price">15.0 TRX</span></div>
-        <a href="https://t.me/StarWavesBuyBot" class="btn btn-glow">🛒 Купить в боте</a>
     </div>
 
-    <!-- СТАТИСТИКА (счётчик звёзд) -->
     <div class="card">
-        <h3 style="margin-bottom: 12px;">📊 Статистика</h3>
-        <div class="stat-row"><span>Покупателей</span><span class="value gold" id="totalBuyers">—</span></div>
-        <div class="stat-row"><span>Продано звёзд</span><span class="value gold" id="totalStarsSold">—</span></div>
-        <div class="stat-row"><span>Выручка</span><span class="value gold" id="totalRevenue">—</span></div>
+        <h3 style="margin-bottom: 12px;">✏️ Своё количество</h3>
+        <input type="number" class="custom-input" id="customStars" placeholder="Введи количество звёзд..." min="1" max="10000">
+        <div style="color: #8b949e; font-size: 14px; margin-top: 8px;">💰 Цена: <span id="customPrice" style="color: #ffd700;">0.00 TRX</span></div>
+        <button class="btn" onclick="buyCustom()">🛒 Купить</button>
     </div>
 
     <div class="footer">StarWaves © 2026</div>
 
     <script>
-        // ===== ЗАГРУЗКА НОВОСТЕЙ =====
-        async function loadNews() {
-            try {
-                const res = await fetch('news.json');
-                const news = await res.json();
-                const container = document.getElementById('newsContainer');
-                container.innerHTML = '';
-                news.forEach(item => {
-                    const div = document.createElement('div');
-                    div.className = 'news-item';
-                    div.innerHTML = `<div class="date">${item.date}</div><div class="text">${item.text}</div>`;
-                    container.appendChild(div);
-                });
-            } catch (e) {
-                document.getElementById('newsContainer').innerHTML = '<p style="color: #ff6b6b;">⚠️ Ошибка загрузки новостей</p>';
-            }
-        }
+        // Пересчёт цены при вводе
+        document.getElementById('customStars').addEventListener('input', function() {
+            const stars = parseInt(this.value) || 0;
+            const price = (stars * 0.02).toFixed(2);
+            document.getElementById('customPrice').textContent = `${price} TRX`;
+        });
 
-        // ===== ЗАГРУЗКА СТАТИСТИКИ =====
-        async function loadStats() {
-            try {
-                const res = await fetch('stats.json');
-                const stats = await res.json();
-                document.getElementById('totalStarsSold').textContent = (stats.stars_sold || 0) + ' ⭐';
-            } catch (e) {
-                document.getElementById('totalStarsSold').textContent = '—';
-            }
-        }
-
-        // ===== ТАЙМЕР БОНУСА (до следующего дня) =====
-        function updateTimer() {
-            const now = new Date();
-            const tomorrow = new Date(now);
-            tomorrow.setDate(tomorrow.getDate() + 1);
-            tomorrow.setHours(0, 0, 0, 0);
-            const diff = tomorrow - now;
-            const h = String(Math.floor(diff / (1000 * 60 * 60))).padStart(2, '0');
-            const m = String(Math.floor((diff % (1000 * 60 * 60)) / (1000 * 60))).padStart(2, '0');
-            const s = String(Math.floor((diff % (1000 * 60)) / 1000)).padStart(2, '0');
-            document.getElementById('bonusTimer').textContent = `${h}:${m}:${s}`;
-        }
-
-        // ===== КНОПКА БОНУСА =====
-        document.getElementById('bonusBtn').addEventListener('click', function() {
-            const lastClaim = localStorage.getItem('lastBonusClaim');
-            const today = new Date().toDateString();
-            if (lastClaim === today) {
-                alert('❌ Ты уже забрал бонус сегодня! Приходи завтра.');
+        // Кнопка покупки -> открывает бота
+        function buyCustom() {
+            const stars = document.getElementById('customStars').value;
+            if (!stars || stars < 1) {
+                alert('Введи количество звёзд!');
                 return;
             }
-            // Начисление бонуса (сохраняем в localStorage)
-            localStorage.setItem('lastBonusClaim', today);
-            let balance = parseFloat(localStorage.getItem('trxBalance') || '0');
-            balance += 0.1;
-            localStorage.setItem('trxBalance', balance.toFixed(2));
-            alert('🎉 Бонус зачислен! +0.1 TRX');
-            location.reload();
-        });
+            // Открываем бота с параметром
+            window.location.href = `https://t.me/StarWavesBuyBot?start=buy_${stars}`;
+        }
 
-        // ===== ПОКАЗ БАЛАНСА =====
-        const balance = localStorage.getItem('trxBalance') || '0.00';
-        document.querySelector('.bonus-block .sub').textContent = `💰 Баланс: ${balance} TRX`;
-
-        // ===== ЗАПУСК =====
-        document.addEventListener('DOMContentLoaded', () => {
-            loadNews();
-            loadStats();
-            updateTimer();
-            setInterval(updateTimer, 1000);
-        });
+        // Для Telegram Web App
+        if (window.Telegram && window.Telegram.WebApp) {
+            window.Telegram.WebApp.ready();
+            window.Telegram.WebApp.expand();
+        }
     </script>
 </body>
 </html>
-
