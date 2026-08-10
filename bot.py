@@ -95,7 +95,7 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
     
     if data.startswith("buy_"):
         stars = int(data.replace("buy_", ""))
-        price = stars  # 1 звезда = 1 XTR
+        price = stars
         await context.bot.send_invoice(
             chat_id=update.effective_user.id,
             title=f"{stars} ⭐",
@@ -295,13 +295,12 @@ async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("adminka", adminka_command))
     application.add_handler(CommandHandler("ref", handle_message))
     application.add_handler(CallbackQueryHandler(buy_handler, pattern="^(buy_|custom|back_main)"))
     application.add_handler(PreCheckoutQueryHandler(pre_checkout))
     application.add_handler(MessageHandler(filters.SUCCESSFUL_PAYMENT, successful_payment))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 StarWaves с оплатой через Telegram Stars запущен!")
+    print("🚀 StarWaves запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
