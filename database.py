@@ -1,113 +1,136 @@
 import asyncpg
 import os
+from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 async def get_conn():
     return await asyncpg.connect(DATABASE_URL)
 
+# ===== ИНИЦИАЛИЗАЦИЯ БАЗЫ =====
 async def init_db():
     conn = await get_conn()
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS users (
-            id SERIAL PRIMARY KEY,
-            user_id BIGINT UNIQUE,
+        CREATE TABLE IF NOT EXISTS players (
+            user_id BIGINT PRIMARY KEY,
             username TEXT,
-            balance DECIMAL DEFAULT 0,
-            total_stars INTEGER DEFAULT 0,
-            created_at TIMESTAMP DEFAULT NOW()
+            level INTEGER DEFAULT 1,
+            exp INTEGER DEFAULT 0,
+            gold INTEGER DEFAULT 0,
+            energy INTEGER DEFAULT 100,
+            last_energy TIMESTAMP,
+            guild_id INTEGER
         )
     ''')
-    # Добавляем колонку, если её ещё нет
-    try:
-        await conn.execute("ALTER TABLE users ADD COLUMN total_stars INTEGER DEFAULT 0")
-    except Exception:
-        pass
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS purchases (
+        CREATE TABLE IF NOT EXISTS guilds (
             id SERIAL PRIMARY KEY,
-            user_id BIGINT,
-            stars INTEGER,
-            price DECIMAL,
-            promo_code TEXT,
+            name TEXT,
+            leader_id BIGINT,
             created_at TIMESTAMP DEFAULT NOW()
         )
     ''')
     await conn.execute('''
-        CREATE TABLE IF NOT EXISTS promo_codes (
-            code TEXT PRIMARY KEY,
-            discount DECIMAL DEFAULT 10,
-            max_uses INTEGER DEFAULT 100,
-            used_count INTEGER DEFAULT 0,
-            active BOOLEAN DEFAULT TRUE,
-            created_at TIMESTAMP DEFAULT NOW()
+        CREATE TABLE IF NOT EXISTS pvp_history (
+            id SERIAL PRIMARY KEY,
+            winner_id BIGINT,
+            loser_id BIGINT,
+            date TIMESTAMP DEFAULT NOW()
         )
     ''')
     await conn.close()
-    print("✅ База данных инициализирована.")
 
-async def get_user(user_id):
+# ===== ИГРОКИ =====
+async def get_player(user_id):
     conn = await get_conn()
-    user = await conn.fetchrow("SELECT * FROM users WHERE user_id = $1", user_id)
+    player = await conn.fetchrow("SELECT * FROM players WHERE user_id = $1", user_id)
     await conn.close()
-    return user
+    return player
 
-async def register_user(user_id, username):
+async def create_player(user_id, username):
     conn = await get_conn()
     await conn.execute('''
-        INSERT INTO users (user_id, username) VALUES ($1, $2)
+        INSERT INTO players (user_id, username, last_energy)
+        VALUES ($1, $2, NOW())
         ON CONFLICT (user_id) DO NOTHING
     ''', user_id, username)
     await conn.close()
 
-async def add_balance(user_id, amount):
-    conn = await get_conn()
-    await conn.execute("UPDATE users SET balance = balance + $1 WHERE user_id = $2", amount, user_id)
-    await conn.close()
-
-async def get_balance(user_id):
-    conn = await get_conn()
-    res = await conn.fetchval("SELECT balance FROM users WHERE user_id = $1", user_id)
-    await conn.close()
-    return res or 0
-
-async def add_purchase(user_id, stars, price, promo=None):
+async def update_player_stats(user_id, exp, gold, energy):
     conn = await get_conn()
     await conn.execute(
-        "INSERT INTO purchases (user_id, stars, price, promo_code) VALUES ($1, $2, $3, $4)",
-        user_id, stars, price, promo
-    )
-    await conn.execute("UPDATE users SET total_stars = total_stars + $1 WHERE user_id = $2", stars, user_id)
-    await conn.close()
-
-async def create_promo(code, discount, max_uses=100):
-    conn = await get_conn()
-    await conn.execute(
-        "INSERT INTO promo_codes (code, discount, max_uses) VALUES ($1, $2, $3)",
-        code, discount, max_uses
+        "UPDATE players SET exp = exp + $1, gold = gold + $2, energy = energy - $3 WHERE user_id = $4",
+        exp, gold, energy, user_id
     )
     await conn.close()
 
-async def validate_promo(code):
-    conn = await get_conn()
-    promo = await conn.fetchrow("SELECT * FROM promo_codes WHERE code = $1 AND active = TRUE", code)
-    await conn.close()
-    if not promo:
-        return None
-    if promo['used_count'] >= promo['max_uses']:
-        return None
-    return promo
-
-async def use_promo(code):
-    conn = await get_conn()
-    await conn.execute("UPDATE promo_codes SET used_count = used_count + 1 WHERE code = $1", code)
-    await conn.close()
-
-async def get_purchases(user_id, limit=5):
+async def get_top_players(limit=10):
     conn = await get_conn()
     rows = await conn.fetch(
-        "SELECT stars, price, promo_code, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at DESC LIMIT $2",
-        user_id, limit
+        "SELECT username, level, gold FROM players ORDER BY level DESC, gold DESC LIMIT $1",
+        limit
     )
     await conn.close()
     return rows
+
+async def get_total_players():
+    conn = await get_conn()
+    total = await conn.fetchval("SELECT COUNT(*) FROM players")
+    await conn.close()
+    return total
+
+# ===== ГИЛЬДИИ =====
+async def get_guild(guild_id):
+    conn = await get_conn()
+    guild = await conn.fetchrow("SELECT * FROM guilds WHERE id = $1", guild_id)
+    await conn.close()
+    return guild
+
+async def get_guild_by_leader(leader_id):
+    conn = await get_conn()
+    guild = await conn.fetchrow("SELECT * FROM guilds WHERE leader_id = $1", leader_id)
+    await conn.close()
+    return guild
+
+async def create_guild(name, leader_id):
+    conn = await get_conn()
+    guild_id = await conn.fetchval(
+        "INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
+        name, leader_id
+    )
+    await conn.execute("UPDATE players SET guild_id = $1 WHERE user_id = $2", guild_id, leader_id)
+    await conn.close()
+    return guild_id
+
+async def join_guild(user_id, guild_id):
+    conn = await get_conn()
+    await conn.execute("UPDATE players SET guild_id = $1 WHERE user_id = $2", guild_id, user_id)
+    await conn.close()
+
+async def get_guild_members(guild_id):
+    conn = await get_conn()
+    rows = await conn.fetch("SELECT user_id, username, level FROM players WHERE guild_id = $1", guild_id)
+    await conn.close()
+    return rows
+
+async def get_top_guilds(limit=10):
+    conn = await get_conn()
+    rows = await conn.fetch("""
+        SELECT g.id, g.name, COUNT(p.user_id) as members
+        FROM guilds g
+        LEFT JOIN players p ON p.guild_id = g.id
+        GROUP BY g.id, g.name
+        ORDER BY members DESC
+        LIMIT $1
+    """, limit)
+    await conn.close()
+    return rows
+
+# ===== PVP ИСТОРИЯ =====
+async def add_pvp_battle(winner_id, loser_id):
+    conn = await get_conn()
+    await conn.execute(
+        "INSERT INTO pvp_history (winner_id, loser_id) VALUES ($1, $2)",
+        winner_id, loser_id
+    )
+    await conn.close()
