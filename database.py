@@ -1,13 +1,11 @@
 import asyncpg
 import os
-from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
 async def get_conn():
     return await asyncpg.connect(DATABASE_URL)
 
-# ===== ИНИЦИАЛИЗАЦИЯ БАЗЫ =====
 async def init_db():
     conn = await get_conn()
     await conn.execute('''
@@ -40,7 +38,6 @@ async def init_db():
     ''')
     await conn.close()
 
-# ===== ИГРОКИ =====
 async def get_player(user_id):
     conn = await get_conn()
     player = await conn.fetchrow("SELECT * FROM players WHERE user_id = $1", user_id)
@@ -64,15 +61,6 @@ async def update_player_stats(user_id, exp, gold, energy):
     )
     await conn.close()
 
-async def get_top_players(limit=10):
-    conn = await get_conn()
-    rows = await conn.fetch(
-        "SELECT username, level, gold FROM players ORDER BY level DESC, gold DESC LIMIT $1",
-        limit
-    )
-    await conn.close()
-    return rows
-
 async def get_total_players():
     conn = await get_conn()
     total = await conn.fetchval("SELECT COUNT(*) FROM players")
@@ -86,12 +74,6 @@ async def get_guild(guild_id):
     await conn.close()
     return guild
 
-async def get_guild_by_leader(leader_id):
-    conn = await get_conn()
-    guild = await conn.fetchrow("SELECT * FROM guilds WHERE leader_id = $1", leader_id)
-    await conn.close()
-    return guild
-
 async def create_guild(name, leader_id):
     conn = await get_conn()
     guild_id = await conn.fetchval(
@@ -102,21 +84,10 @@ async def create_guild(name, leader_id):
     await conn.close()
     return guild_id
 
-async def join_guild(user_id, guild_id):
-    conn = await get_conn()
-    await conn.execute("UPDATE players SET guild_id = $1 WHERE user_id = $2", guild_id, user_id)
-    await conn.close()
-
-async def get_guild_members(guild_id):
-    conn = await get_conn()
-    rows = await conn.fetch("SELECT user_id, username, level FROM players WHERE guild_id = $1", guild_id)
-    await conn.close()
-    return rows
-
 async def get_top_guilds(limit=10):
     conn = await get_conn()
     rows = await conn.fetch("""
-        SELECT g.id, g.name, COUNT(p.user_id) as members
+        SELECT g.name, COUNT(p.user_id) as members
         FROM guilds g
         LEFT JOIN players p ON p.guild_id = g.id
         GROUP BY g.id, g.name
@@ -126,11 +97,8 @@ async def get_top_guilds(limit=10):
     await conn.close()
     return rows
 
-# ===== PVP ИСТОРИЯ =====
-async def add_pvp_battle(winner_id, loser_id):
+async def get_guild_members(guild_id):
     conn = await get_conn()
-    await conn.execute(
-        "INSERT INTO pvp_history (winner_id, loser_id) VALUES ($1, $2)",
-        winner_id, loser_id
-    )
+    rows = await conn.fetch("SELECT user_id, username, level FROM players WHERE guild_id = $1", guild_id)
     await conn.close()
+    return rows
