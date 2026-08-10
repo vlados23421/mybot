@@ -1,12 +1,9 @@
 import os
 import asyncio
 import asyncpg
-import aiohttp
-import json
-import hashlib
-from datetime import datetime, timedelta
 from aiohttp import web
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup, KeyboardButton, WebAppInfo
+from datetime import datetime
+from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
 from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -117,16 +114,17 @@ async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
     user = update.effective_user
     await register_user(user.id, user.username)
     balance = await get_balance(user.id)
+    user_data = await get_user(user.id)
     await update.message.reply_text(
         f"🌟 **Добро пожаловать в StarWaves!**\n\n"
         f"💰 Твой баланс: {balance} TRX\n"
-        f"⭐ Всего звёзд: {await get_user(user.id)['total_stars']}\n\n"
+        f"⭐ Всего звёзд: {user_data['total_stars']}\n\n"
         f"Здесь ты можешь купить Telegram Stars по лучшей цене.",
         parse_mode='Markdown',
-        reply_markup=main_keyboard if user.id != ADMIN_ID else admin_keyboard
+        reply_markup=main_keyboard
     )
 
-# ===== КУПИТЬ ЗВЁЗДЫ (гибкий ввод) =====
+# ===== КУПИТЬ ЗВЁЗДЫ =====
 async def buy_stars_menu(update: Update, context: ContextTypes.DEFAULT_TYPE):
     keyboard = InlineKeyboardMarkup([
         [InlineKeyboardButton("⭐ 50 звёзд (1.0 TRX)", callback_data="buy_50")],
@@ -173,11 +171,12 @@ async def buy_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
         )
         context.user_data['pending_purchase'] = {"stars": stars, "price": price}
 
+# ===== ОБРАБОТЧИК =====
 async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
     text = update.message.text
     user_id = update.effective_user.id
 
-    # Обработка истории
+    # История
     if text == "📦 История":
         conn = await asyncpg.connect(os.getenv("DATABASE_URL"))
         rows = await conn.fetch("SELECT stars, price, promo_code, created_at FROM purchases WHERE user_id = $1 ORDER BY created_at DESC", user_id)
@@ -185,16 +184,16 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
         if not rows:
             await update.message.reply_text("📭 У тебя пока нет покупок.")
             return
-        text = "📦 **История покупок:**\n\n"
+        output = "📦 **История покупок:**\n\n"
         for r in rows[:5]:
-            text += f"⭐ {r['stars']} звёзд — {r['price']} TRX"
+            output += f"⭐ {r['stars']} звёзд — {r['price']} TRX"
             if r['promo_code']:
-                text += f" (промокод: {r['promo_code']})"
-            text += f"\n"
-        await update.message.reply_text(text, parse_mode='Markdown')
+                output += f" (промокод: {r['promo_code']})"
+            output += "\n"
+        await update.message.reply_text(output, parse_mode='Markdown')
         return
 
-    # Обработка админских команд
+    # Админка
     if user_id == ADMIN_ID:
         if text.startswith("/addbalance"):
             parts = text.split()
@@ -225,7 +224,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
                 await update.message.reply_text("❌ Используй: /createpromo КОД СКИДКА [МАКС_ИСПОЛЬЗОВАНИЙ]")
             return
 
-    # Обработка кастомного ввода звёзд
+    # Кастомный ввод
     if context.user_data.get('custom_stars'):
         try:
             stars = int(text)
@@ -245,7 +244,7 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ Введи число!")
         return
 
-    # Обработка оплаты с промокодом
+    # Оплата с промокодом
     if context.user_data.get('pending_purchase'):
         parts = text.split()
         try:
