@@ -1,6 +1,5 @@
 import asyncpg
 import os
-from datetime import datetime
 
 DATABASE_URL = os.getenv("DATABASE_URL")
 
@@ -17,7 +16,6 @@ async def init_db():
             exp INTEGER DEFAULT 0,
             gold INTEGER DEFAULT 0,
             energy INTEGER DEFAULT 100,
-            last_energy TIMESTAMP,
             guild_id INTEGER
         )
     ''')
@@ -37,23 +35,6 @@ async def init_db():
             date TIMESTAMP DEFAULT NOW()
         )
     ''')
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS promo_codes (
-            code TEXT PRIMARY KEY,
-            reward_type TEXT,
-            reward_amount INTEGER,
-            uses_left INTEGER DEFAULT 1,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-    ''')
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS cooldowns (
-            user_id BIGINT,
-            action TEXT,
-            expires_at TIMESTAMP,
-            PRIMARY KEY (user_id, action)
-        )
-    ''')
     await conn.close()
 
 async def get_player(user_id):
@@ -65,8 +46,7 @@ async def get_player(user_id):
 async def create_player(user_id, username):
     conn = await get_conn()
     await conn.execute('''
-        INSERT INTO players (user_id, username, last_energy)
-        VALUES ($1, $2, NOW())
+        INSERT INTO players (user_id, username, energy) VALUES ($1, $2, 100)
         ON CONFLICT (user_id) DO NOTHING
     ''', user_id, username)
     await conn.close()
@@ -77,6 +57,11 @@ async def update_player_stats(user_id, exp, gold, energy):
         "UPDATE players SET exp = exp + $1, gold = gold + $2, energy = energy - $3 WHERE user_id = $4",
         exp, gold, energy, user_id
     )
+    await conn.close()
+
+async def restore_energy(user_id):
+    conn = await get_conn()
+    await conn.execute("UPDATE players SET energy = 100 WHERE user_id = $1", user_id)
     await conn.close()
 
 async def get_total_players():
@@ -115,46 +100,12 @@ async def get_top_guilds(limit=10):
     await conn.close()
     return rows
 
-# ===== ПРОМОКОДЫ =====
-async def create_promo_code(code, reward_type, amount, uses=1):
+# ===== ТОП ИГРОКОВ =====
+async def get_top_players(limit=10):
     conn = await get_conn()
-    await conn.execute(
-        "INSERT INTO promo_codes (code, reward_type, reward_amount, uses_left) VALUES ($1, $2, $3, $4)",
-        code, reward_type, amount, uses
+    rows = await conn.fetch(
+        "SELECT username, level, gold FROM players ORDER BY level DESC, gold DESC LIMIT $1",
+        limit
     )
     await conn.close()
-
-async def use_promo_code(user_id, code):
-    conn = await get_conn()
-    promo = await conn.fetchrow("SELECT * FROM promo_codes WHERE code = $1 AND uses_left > 0", code)
-    if not promo:
-        await conn.close()
-        return None
-    player = await get_player(user_id)
-    if promo['reward_type'] == 'gold':
-        await conn.execute("UPDATE players SET gold = gold + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
-    elif promo['reward_type'] == 'exp':
-        await conn.execute("UPDATE players SET exp = exp + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
-    await conn.execute("UPDATE promo_codes SET uses_left = uses_left - 1 WHERE code = $1", code)
-    await conn.close()
-    return promo
-
-# ===== КУЛДАУНЫ =====
-async def set_cooldown(user_id, action, seconds):
-    conn = await get_conn()
-    expires = datetime.now() + timedelta(seconds=seconds)
-    await conn.execute(
-        "INSERT INTO cooldowns (user_id, action, expires_at) VALUES ($1, $2, $3) ON CONFLICT (user_id, action) DO UPDATE SET expires_at = $3",
-        user_id, action, expires
-    )
-    await conn.close()
-
-async def check_cooldown(user_id, action):
-    conn = await get_conn()
-    row = await conn.fetchrow("SELECT expires_at FROM cooldowns WHERE user_id = $1 AND action = $2", user_id, action)
-    await conn.close()
-    if not row:
-        return None
-    if datetime.now() > row['expires_at']:
-        return None
-    return (row['expires_at'] - datetime.now()).seconds
+    return rows
