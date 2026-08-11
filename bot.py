@@ -7,7 +7,8 @@ from telegram.ext import Application, CommandHandler, MessageHandler, filters, C
 
 from database import (
     init_db, get_player, create_player, update_player_stats, restore_energy,
-    get_top_guilds, create_guild, get_guild, get_top_players, get_total_players
+    get_top_guilds, create_guild, get_guild, get_top_players, get_total_players,
+    create_promo, use_promo
 )
 
 TOKEN = os.getenv("BOT_TOKEN")
@@ -22,7 +23,8 @@ main_keyboard = ReplyKeyboardMarkup([
 admin_keyboard = ReplyKeyboardMarkup([
     ["📊 Статистика", "💰 Выдать золото"],
     ["⭐ Выдать опыт", "⚡ Восстановить энергию"],
-    ["📋 Топ игроков", "🔙 Выйти из админки"]
+    ["📋 Топ игроков", "🎟️ Создать промокод"],
+    ["🔙 Выйти из админки"]
 ], resize_keyboard=True)
 
 async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
@@ -69,6 +71,36 @@ async def admin_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
     for i, r in enumerate(rows, 1):
         text += f"{i}. **{r['username']}** — Уровень {r['level']}, {r['gold']} 🪙\n"
     await update.message.reply_text(text, parse_mode='Markdown')
+
+# ===== СОЗДАНИЕ ПРОМОКОДА =====
+async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    keyboard = InlineKeyboardMarkup([
+        [InlineKeyboardButton("💰 Золото", callback_data="promo_gold")],
+        [InlineKeyboardButton("⭐ Опыт", callback_data="promo_exp")],
+        [InlineKeyboardButton("⚡ Энергия", callback_data="promo_energy")]
+    ])
+    await update.message.reply_text(
+        "🎟️ **Выбери тип награды для промокода:**",
+        reply_markup=keyboard,
+        parse_mode='Markdown'
+    )
+
+async def promo_create_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    query = update.callback_query
+    await query.answer()
+    data = query.data
+    
+    if data.startswith("promo_"):
+        reward_type = data.replace("promo_", "")
+        context.user_data['promo_type'] = reward_type
+        await query.edit_message_text(
+            f"🎟️ **Введи данные промокода через пробел:**\n\n"
+            f"Формат: `КОД КОЛИЧЕСТВО АКТИВАЦИЙ`\n"
+            f"Пример: `SUMMER10 100 5`\n"
+            f"(это даст {reward_type} в количестве 100, можно использовать 5 раз)",
+            parse_mode='Markdown'
+        )
+        context.user_data['admin_promo_input'] = True
 
 async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
     player = await get_player(update.effective_user.id)
@@ -164,6 +196,23 @@ async def create_guild_handler(update: Update, context: ContextTypes.DEFAULT_TYP
         context.user_data['creating_guild'] = False
         await update.message.reply_text(f"🏆 **Гильдия «{name}» создана!**\n\nID: {guild_id}", parse_mode='Markdown')
 
+# ===== КОМАНДА /PROMO =====
+async def promo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
+    args = context.args
+    if not args:
+        await update.message.reply_text("❌ **Используй:** `/promo КОД`", parse_mode='Markdown')
+        return
+    code = args[0].upper()
+    user_id = update.effective_user.id
+    result = await use_promo(user_id, code)
+    if not result:
+        await update.message.reply_text("❌ **Промокод недействителен или уже использован.**", parse_mode='Markdown')
+        return
+    await update.message.reply_text(
+        f"🎉 **Промокод активирован!**\n\n+{result['reward_amount']} {result['reward_type']}",
+        parse_mode='Markdown'
+    )
+
 async def pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
     await update.message.reply_text("⚡ **PvP-арена будет доступна в следующем обновлении!**", parse_mode='Markdown')
 
@@ -205,6 +254,9 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             return
         if text == "📋 Топ игроков":
             await admin_top(update, context)
+            return
+        if text == "🎟️ Создать промокод":
+            await admin_promo(update, context)
             return
         if text == "🔙 Выйти из админки":
             await update.message.reply_text("👋 **Выход из админки.**", parse_mode='Markdown', reply_markup=main_keyboard)
@@ -250,6 +302,23 @@ async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
             await update.message.reply_text("❌ **Ошибка.** Введи ID.", parse_mode='Markdown')
         return
 
+    if context.user_data.get('admin_promo_input'):
+        parts = text.split()
+        if len(parts) != 3:
+            await update.message.reply_text("❌ **Используй:** `КОД КОЛИЧЕСТВО АКТИВАЦИЙ`", parse_mode='Markdown')
+            return
+        code = parts[0].upper()
+        amount = int(parts[1])
+        uses = int(parts[2])
+        reward_type = context.user_data.get('promo_type', 'gold')
+        await create_promo(code, reward_type, amount, uses)
+        context.user_data['admin_promo_input'] = False
+        await update.message.reply_text(
+            f"✅ **Промокод `{code}` создан!**\n\n{amount} {reward_type}, {uses} активаций",
+            parse_mode='Markdown'
+        )
+        return
+
     if context.user_data.get('creating_guild'):
         await create_guild_handler(update, context)
         return
@@ -268,10 +337,12 @@ async def main():
     await init_db()
     application = Application.builder().token(TOKEN).build()
     application.add_handler(CommandHandler("start", start))
+    application.add_handler(CommandHandler("promo", promo_command))
     application.add_handler(CallbackQueryHandler(quest_handler, pattern="^(quest_|restore)"))
     application.add_handler(CallbackQueryHandler(guild_handler, pattern="^guild_"))
+    application.add_handler(CallbackQueryHandler(promo_create_handler, pattern="^promo_"))
     application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 Игровой бот (без кулдаунов) запущен!")
+    print("🚀 Игровой бот с промокодами запущен!")
     await application.initialize()
     await application.start()
     await application.updater.start_polling()
