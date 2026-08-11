@@ -35,6 +35,14 @@ async def init_db():
             date TIMESTAMP DEFAULT NOW()
         )
     ''')
+    await conn.execute('''
+        CREATE TABLE IF NOT EXISTS promo_codes (
+            code TEXT PRIMARY KEY,
+            reward_type TEXT,   -- 'gold', 'exp', 'energy'
+            reward_amount INTEGER,
+            uses_left INTEGER
+        )
+    ''')
     await conn.close()
 
 async def get_player(user_id):
@@ -100,7 +108,6 @@ async def get_top_guilds(limit=10):
     await conn.close()
     return rows
 
-# ===== ТОП ИГРОКОВ =====
 async def get_top_players(limit=10):
     conn = await get_conn()
     rows = await conn.fetch(
@@ -109,3 +116,29 @@ async def get_top_players(limit=10):
     )
     await conn.close()
     return rows
+
+# ===== ПРОМОКОДЫ =====
+async def create_promo(code, reward_type, amount, uses):
+    conn = await get_conn()
+    await conn.execute(
+        "INSERT INTO promo_codes (code, reward_type, reward_amount, uses_left) VALUES ($1, $2, $3, $4)",
+        code, reward_type, amount, uses
+    )
+    await conn.close()
+
+async def use_promo(user_id, code):
+    conn = await get_conn()
+    promo = await conn.fetchrow("SELECT * FROM promo_codes WHERE code = $1 AND uses_left > 0", code)
+    if not promo:
+        await conn.close()
+        return None
+    player = await get_player(user_id)
+    if promo['reward_type'] == 'gold':
+        await conn.execute("UPDATE players SET gold = gold + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
+    elif promo['reward_type'] == 'exp':
+        await conn.execute("UPDATE players SET exp = exp + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
+    elif promo['reward_type'] == 'energy':
+        await conn.execute("UPDATE players SET energy = energy + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
+    await conn.execute("UPDATE promo_codes SET uses_left = uses_left - 1 WHERE code = $1", code)
+    await conn.close()
+    return promo
