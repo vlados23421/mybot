@@ -11,7 +11,71 @@ DATABASE_URL = os.environ.get('DATABASE_URL')
 
 def get_db_connection():
     """Подключение к PostgreSQL"""
+    if not DATABASE_URL:
+        raise Exception("DATABASE_URL не найден в переменных окружения!")
     return psycopg.connect(DATABASE_URL)
+
+# ============================================
+# === ИНИЦИАЛИЗАЦИЯ БАЗЫ ДАННЫХ ===
+# ============================================
+
+def init_db():
+    """Создание всех таблиц, если их нет"""
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        # Таблица пользователей сайта
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS users (
+                id SERIAL PRIMARY KEY,
+                username VARCHAR(50) UNIQUE NOT NULL,
+                email VARCHAR(100) UNIQUE NOT NULL,
+                password_hash VARCHAR(255) NOT NULL,
+                verified BOOLEAN DEFAULT FALSE,
+                joined TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                avatar VARCHAR(10) DEFAULT '👤',
+                email_verified BOOLEAN DEFAULT FALSE
+            )
+        ''')
+        
+        # Таблица Telegram-пользователей
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS telegram_users (
+                id SERIAL PRIMARY KEY,
+                telegram_id BIGINT UNIQUE NOT NULL,
+                username VARCHAR(100),
+                first_name VARCHAR(100),
+                last_name VARCHAR(100),
+                registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                is_admin BOOLEAN DEFAULT FALSE
+            )
+        ''')
+        
+        # Таблица кодов подтверждения
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS verification_codes (
+                id SERIAL PRIMARY KEY,
+                code VARCHAR(6) NOT NULL,
+                email VARCHAR(100) NOT NULL,
+                username VARCHAR(50) NOT NULL,
+                created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                expires_at TIMESTAMP,
+                used BOOLEAN DEFAULT FALSE
+            )
+        ''')
+        
+        # Таблица уведомлений
+        cur.execute('''
+            CREATE TABLE IF NOT EXISTS notifications (
+                id SERIAL PRIMARY KEY,
+                message TEXT NOT NULL,
+                sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+                sent_to INTEGER
+            )
+        ''')
+        
+        conn.commit()
+        print('✅ Все таблицы созданы/проверены!')
+    conn.close()
 
 # ============================================
 # === ПОЛЬЗОВАТЕЛИ САЙТА ===
@@ -89,12 +153,13 @@ def register_telegram_user(telegram_id, username, first_name, last_name):
     conn = get_db_connection()
     with conn.cursor() as cur:
         cur.execute('''
-            INSERT INTO telegram_users (telegram_id, username, first_name, last_name)
-            VALUES (%s, %s, %s, %s)
+            INSERT INTO telegram_users (telegram_id, username, first_name, last_name, registered_at)
+            VALUES (%s, %s, %s, %s, NOW())
             ON CONFLICT (telegram_id) DO UPDATE SET
                 username = EXCLUDED.username,
                 first_name = EXCLUDED.first_name,
-                last_name = EXCLUDED.last_name
+                last_name = EXCLUDED.last_name,
+                registered_at = NOW()
         ''', (telegram_id, username, first_name, last_name))
     conn.commit()
     conn.close()
@@ -107,6 +172,14 @@ def get_all_telegram_users():
         users = cur.fetchall()
     conn.close()
     return users
+
+def delete_telegram_user(telegram_id):
+    """Удалить пользователя из бота"""
+    conn = get_db_connection()
+    with conn.cursor() as cur:
+        cur.execute('DELETE FROM telegram_users WHERE telegram_id = %s', (telegram_id,))
+    conn.commit()
+    conn.close()
 
 # ============================================
 # === КОДЫ ПОДТВЕРЖДЕНИЯ ===
