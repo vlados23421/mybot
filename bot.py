@@ -1,353 +1,494 @@
 import os
-import asyncio
-from random import randint
-from aiohttp import web
-from telegram import Update, ReplyKeyboardMarkup, InlineKeyboardButton, InlineKeyboardMarkup
-from telegram.ext import Application, CommandHandler, MessageHandler, filters, CallbackQueryHandler, ContextTypes
+import telebot
+from telebot import types
+import psycopg2
+import random
+import re
+from datetime import datetime, timedelta
+from urllib.parse import urlparse
 
-from database import (
-    init_db, get_player, create_player, update_player_stats, restore_energy,
-    get_top_guilds, create_guild, get_guild, get_top_players, get_total_players,
-    create_promo, use_promo
-)
+# ============================================
+# === ПОДКЛЮЧЕНИЕ К POSTGRESQL (RENDER) ===
+# ============================================
 
-TOKEN = os.getenv("BOT_TOKEN")
-ADMIN_ID = int(os.getenv("ADMIN_ID"))
+# Получаем URL базы данных из переменных окружения Render
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://user:password@localhost:5432/battlez')
 
-main_keyboard = ReplyKeyboardMarkup([
-    ["🧙 Профиль", "⚔️ Квесты"],
-    ["🏆 Гильдии", "⚡ PvP"],
-    ["👑 Админка", "📞 Поддержка"]
-], resize_keyboard=True)
+# Парсим URL для подключения
+def get_db_connection():
+    return psycopg2.connect(DATABASE_URL)
 
-admin_keyboard = ReplyKeyboardMarkup([
-    ["📊 Статистика", "💰 Выдать золото"],
-    ["⭐ Выдать опыт", "⚡ Восстановить энергию"],
-    ["📋 Топ игроков", "🎟️ Создать промокод"],
-    ["🔙 Выйти из админки"]
-], resize_keyboard=True)
+# ============================================
+# === НАСТРОЙКА БОТА ===
+# ============================================
 
-async def start(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await init_db()
-    user = update.effective_user
-    await create_player(user.id, user.username or "Без имени")
-    player = await get_player(user.id)
-    guild = None
-    if player['guild_id']:
-        guild = await get_guild(player['guild_id'])
+TOKEN = '8859123911:AAFE7Z6ceQIQ-JzC5xWG06YfIv21G8OaM94'
+ADMIN_IDS = [539015206]  # Ваш Telegram ID
+
+bot = telebot.TeleBot(TOKEN)
+
+# ============================================
+# === РАБОТА С БАЗОЙ ДАННЫХ ===
+# ============================================
+
+def init_db():
+    """Создание таблиц если их нет"""
+    conn = get_db_connection()
+    c = conn.cursor()
     
-    text = f"⚔️ **Добро пожаловать в мир приключений!**\n\n"
-    text += f"🧙 Уровень: {player['level']}\n"
-    text += f"⭐ Опыт: {player['exp']} / {player['level'] * 100}\n"
-    text += f"💰 Золото: {player['gold']}\n"
-    text += f"⚡ Энергия: {player['energy']}\n"
-    if guild:
-        text += f"🏆 Гильдия: {guild['name']}\n"
+    # Создаем таблицу для Telegram-пользователей (связь с сайтом)
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS telegram_users (
+            id SERIAL PRIMARY KEY,
+            telegram_id BIGINT UNIQUE NOT NULL,
+            username VARCHAR(100),
+            first_name VARCHAR(100),
+            last_name VARCHAR(100),
+            registered_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            is_admin BOOLEAN DEFAULT FALSE
+        )
+    ''')
     
-    if user.id == ADMIN_ID:
-        await update.message.reply_text(text + "\n\n👑 **Режим админа активен**", parse_mode='Markdown', reply_markup=admin_keyboard)
+    # Создаем таблицу для кодов подтверждения
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS verification_codes (
+            id SERIAL PRIMARY KEY,
+            code VARCHAR(6) NOT NULL,
+            email VARCHAR(100) NOT NULL,
+            username VARCHAR(50) NOT NULL,
+            created_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            expires_at TIMESTAMP,
+            used BOOLEAN DEFAULT FALSE
+        )
+    ''')
+    
+    # Создаем таблицу для уведомлений
+    c.execute('''
+        CREATE TABLE IF NOT EXISTS notifications (
+            id SERIAL PRIMARY KEY,
+            message TEXT NOT NULL,
+            sent_at TIMESTAMP DEFAULT CURRENT_TIMESTAMP,
+            sent_to INTEGER
+        )
+    ''')
+    
+    conn.commit()
+    conn.close()
+    print('✅ База данных PostgreSQL инициализирована!')
+
+def get_user_by_telegram(telegram_id):
+    """Получить пользователя по Telegram ID"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT * FROM telegram_users WHERE telegram_id = %s', (telegram_id,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+def get_user_from_site(username):
+    """Получить пользователя сайта по username"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT * FROM users WHERE username = %s', (username,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+def register_telegram_user(telegram_id, username, first_name, last_name):
+    """Регистрация пользователя в боте"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    c.execute('''
+        INSERT INTO telegram_users (telegram_id, username, first_name, last_name)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (telegram_id) DO UPDATE SET
+            username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name
+    ''', (telegram_id, username, first_name, last_name))
+    
+    conn.commit()
+    conn.close()
+
+def save_verification_code(code, email, username):
+    """Сохранить код подтверждения"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    expires_at = datetime.now() + timedelta(minutes=5)
+    
+    c.execute('''
+        INSERT INTO verification_codes (code, email, username, expires_at)
+        VALUES (%s, %s, %s, %s)
+    ''', (code, email, username, expires_at))
+    
+    conn.commit()
+    conn.close()
+
+def verify_code(code, email):
+    """Проверить код подтверждения"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    
+    c.execute('''
+        SELECT * FROM verification_codes 
+        WHERE code = %s AND email = %s AND used = FALSE AND expires_at > NOW()
+    ''', (code, email))
+    
+    result = c.fetchone()
+    
+    if result:
+        c.execute('UPDATE verification_codes SET used = TRUE WHERE code = %s', (code,))
+        conn.commit()
+        conn.close()
+        return True
+    
+    conn.close()
+    return False
+
+def get_all_telegram_users():
+    """Получить всех пользователей бота"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT telegram_id FROM telegram_users')
+    users = c.fetchall()
+    conn.close()
+    return users
+
+def get_site_user_stats():
+    """Получить статистику пользователей сайта"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM users')
+    total = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM users WHERE verified = TRUE')
+    verified = c.fetchone()[0]
+    conn.close()
+    return total, verified
+
+# ============================================
+# === ОТПРАВКА КОДОВ ===
+# ============================================
+
+def generate_code():
+    return str(random.randint(100000, 999999))
+
+def send_code_to_admin(code, email, username):
+    """Отправить код админу в Telegram"""
+    admin_id = ADMIN_IDS[0]
+    
+    message = f"""
+🔐 **НОВЫЙ КОД ПОДТВЕРЖДЕНИЯ!**
+
+👤 **Имя:** {username}
+📧 **Email:** {email}
+🔑 **Код:** `{code}`
+⏱ **Действует:** 5 минут
+
+📌 Дайте этот код пользователю для входа на сайт.
+"""
+    bot.send_message(admin_id, message, parse_mode='Markdown')
+
+def send_code_to_user(telegram_id, code):
+    """Отправить код пользователю в Telegram"""
+    message = f"""
+🔐 **Ваш код подтверждения BattleZ**
+
+🔑 **Код:** `{code}`
+⏱ **Действует:** 5 минут
+
+📌 Введите код на сайте для завершения регистрации.
+
+🌐 **Перейти на сайт:** https://battle-z.vercel.app/
+"""
+    bot.send_message(telegram_id, message, parse_mode='Markdown')
+
+# ============================================
+# === ОБРАБОТЧИК КОМАНД ===
+# ============================================
+
+@bot.message_handler(commands=['start'])
+def start(message):
+    """Приветственное сообщение"""
+    user = get_user_by_telegram(message.from_user.id)
+    
+    if user is None:
+        register_telegram_user(
+            message.from_user.id,
+            message.from_user.username,
+            message.from_user.first_name,
+            message.from_user.last_name
+        )
+    
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    btn1 = types.InlineKeyboardButton("🌐 На сайт", url="https://battle-z.vercel.app/")
+    btn2 = types.InlineKeyboardButton("📰 Новости", callback_data="news")
+    btn3 = types.InlineKeyboardButton("🎮 Ивенты", callback_data="events")
+    btn4 = types.InlineKeyboardButton("👤 Профиль", callback_data="profile")
+    keyboard.add(btn1, btn2, btn3, btn4)
+    
+    welcome_text = f"""
+⚔️ **Добро пожаловать в BattleZ!**
+
+Привет, {message.from_user.first_name}! 🎉
+
+BattleZ — это новый игровой проект в Telegram.
+
+📌 **Что умеет бот:**
+• Получать уведомления о новостях
+• Участвовать в ивентах
+• Получать коды подтверждения
+• Следить за развитием проекта
+
+🚀 **Присоединяйся к BattleZ!**
+
+---
+
+**#BattleZ #ДоброПожаловать**
+    """
+    
+    bot.send_message(message.chat.id, welcome_text, parse_mode='Markdown', reply_markup=keyboard)
+
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Команда помощи"""
+    help_text = """
+📚 **Помощь по BattleZ**
+
+🔹 **Основные команды:**
+/start — Главное меню
+/help — Помощь
+/profile — Мой профиль
+/status — Статус проекта
+/verify — Проверить верификацию
+
+🔹 **Информация:**
+/support — Связаться с поддержкой
+
+📌 **Ссылки:**
+🌐 Сайт: https://battle-z.vercel.app/
+📱 Канал: https://t.me/StarWayBuyStarsNews
+
+---
+
+**#BattleZ #Помощь**
+    """
+    bot.reply_to(message, help_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['profile'])
+def profile(message):
+    """Показать профиль пользователя"""
+    user = get_user_by_telegram(message.from_user.id)
+    
+    if user:
+        # Проверяем, есть ли пользователь на сайте
+        site_user = None
+        if user[2]:  # username
+            site_user = get_user_from_site(user[2])
+        
+        profile_text = f"""
+👤 **Ваш профиль**
+
+🆔 ID: {user[1]}
+👤 Имя: {user[3] or 'Не указано'}
+📝 Username: @{user[2] or 'Не указан'}
+📅 В боте: {user[5].strftime('%d.%m.%Y %H:%M') if user[5] else 'Неизвестно'}
+
+**На сайте:**
+{'✅ Есть аккаунт' if site_user else '❌ Нет аккаунта'}
+{'👑 Верифицирован' if site_user and site_user[3] else ''}
+
+---
+
+⚔️ **BattleZ**
+        """
+        bot.reply_to(message, profile_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['status'])
+def status_command(message):
+    """Статус проекта"""
+    total_users, verified_users = get_site_user_stats()
+    bot_users = len(get_all_telegram_users())
+    
+    status_text = f"""
+📊 **Статус проекта BattleZ**
+
+👥 **Всего на сайте:** {total_users} игроков
+👑 **Верифицировано:** {verified_users} игроков
+🤖 **В боте:** {bot_users} пользователей
+🟢 **Онлайн:** ~{random.randint(10, 50)} игроков
+
+🚀 **Текущий этап:** Оптимизация и улучшение UX
+📅 **Релиз:** 19 августа 2026
+
+---
+
+**#BattleZ #Статус**
+    """
+    bot.reply_to(message, status_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['verify'])
+def verify_status(message):
+    """Проверить статус верификации"""
+    user = get_user_by_telegram(message.from_user.id)
+    
+    if user and user[2]:
+        site_user = get_user_from_site(user[2])
+        if site_user:
+            if site_user[3]:  # verified
+                bot.reply_to(message, "✅ **Вы верифицированы!** 🎉", parse_mode='Markdown')
+            else:
+                bot.reply_to(message, "❌ **Вы не верифицированы.** Обратитесь к администратору.", parse_mode='Markdown')
+        else:
+            bot.reply_to(message, "❌ **У вас нет аккаунта на сайте.** Зарегистрируйтесь!", parse_mode='Markdown')
     else:
-        await update.message.reply_text(text, parse_mode='Markdown', reply_markup=main_keyboard)
+        bot.reply_to(message, "❌ **Вы не зарегистрированы в боте.** Напишите /start", parse_mode='Markdown')
 
-async def admin_stats(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    players = await get_total_players()
-    await update.message.reply_text(f"📊 **Статистика:**\n\n👥 Игроков: {players}", parse_mode='Markdown')
+# ============================================
+# === АДМИН-КОМАНДЫ ===
+# ============================================
 
-async def admin_gold(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("💰 **Введи ID и количество золота через пробел:**\nПример: `123456789 500`")
-    context.user_data['admin_gold'] = True
-
-async def admin_exp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⭐ **Введи ID и количество опыта через пробел:**\nПример: `123456789 100`")
-    context.user_data['admin_exp'] = True
-
-async def admin_energy(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚡ **Введи ID для восстановления энергии:**")
-    context.user_data['admin_energy'] = True
-
-async def admin_top(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    rows = await get_top_players()
-    text = "📋 **Топ-10 игроков:**\n\n"
-    for i, r in enumerate(rows, 1):
-        text += f"{i}. **{r['username']}** — Уровень {r['level']}, {r['gold']} 🪙\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-# ===== СОЗДАНИЕ ПРОМОКОДА =====
-async def admin_promo(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("💰 Золото", callback_data="promo_gold")],
-        [InlineKeyboardButton("⭐ Опыт", callback_data="promo_exp")],
-        [InlineKeyboardButton("⚡ Энергия", callback_data="promo_energy")]
-    ])
-    await update.message.reply_text(
-        "🎟️ **Выбери тип награды для промокода:**",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
-
-async def promo_create_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    
-    if data.startswith("promo_"):
-        reward_type = data.replace("promo_", "")
-        context.user_data['promo_type'] = reward_type
-        await query.edit_message_text(
-            f"🎟️ **Введи данные промокода через пробел:**\n\n"
-            f"Формат: `КОД КОЛИЧЕСТВО АКТИВАЦИЙ`\n"
-            f"Пример: `SUMMER10 100 5`\n"
-            f"(это даст {reward_type} в количестве 100, можно использовать 5 раз)",
-            parse_mode='Markdown'
-        )
-        context.user_data['admin_promo_input'] = True
-
-async def profile(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    player = await get_player(update.effective_user.id)
-    text = f"🧙 **Твой профиль**\n\n"
-    text += f"👤 Имя: {player['username']}\n"
-    text += f"📈 Уровень: {player['level']}\n"
-    text += f"⭐ Опыт: {player['exp']} / {player['level'] * 100}\n"
-    text += f"💰 Золото: {player['gold']}\n"
-    text += f"⚡ Энергия: {player['energy']}\n"
-    await update.message.reply_text(text, parse_mode='Markdown')
-
-async def quests(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("🌲 Поход в лес", callback_data="quest_1")],
-        [InlineKeyboardButton("🏔️ Подземелье", callback_data="quest_2")],
-        [InlineKeyboardButton("🔄 Восстановить энергию", callback_data="restore")]
-    ])
-    await update.message.reply_text(
-        "⚔️ **Выбери квест:**\n\n"
-        "🌲 Поход в лес — `+50 ⭐, +20 🪙` (20 ⚡)\n"
-        "🏔️ Подземелье — `+100 ⭐, +50 🪙` (40 ⚡)",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
-
-async def quest_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = update.effective_user.id
-    player = await get_player(user_id)
-    
-    if data == "restore":
-        await restore_energy(user_id)
-        await query.edit_message_text("⚡ **Энергия восстановлена!**")
+@bot.message_handler(commands=['stats'])
+def stats(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав для этой команды.")
         return
     
-    cost = 20 if data == "quest_1" else 40
-    if player['energy'] < cost:
-        await query.edit_message_text("❌ **Недостаточно энергии!** Нажми «Восстановить».")
+    total_users, verified_users = get_site_user_stats()
+    bot_users = len(get_all_telegram_users())
+    
+    stats_text = f"""
+📊 **Статистика проекта**
+
+👥 **Пользователи сайта:** {total_users}
+👑 **Верифицированы:** {verified_users}
+🤖 **Пользователи бота:** {bot_users}
+
+📅 **Запуск:** 19 августа 2026
+🚀 **Версия:** 1.0.0
+
+---
+
+**#BattleZ #Админ #Статистика**
+    """
+    bot.reply_to(message, stats_text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['broadcast'])
+def broadcast(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав для этой команды.")
         return
     
-    exp = 50 if data == "quest_1" else 100
-    gold = 20 if data == "quest_1" else 50
-    await update_player_stats(user_id, exp, gold, cost)
-    player = await get_player(user_id)
-    await query.edit_message_text(
-        f"✅ **Квест выполнен!**\n\n"
-        f"⭐ +{exp} опыта\n"
-        f"🪙 +{gold} золота\n"
-        f"📈 **Уровень:** {player['level']}\n"
-        f"⚡ **Осталось:** {player['energy']}",
-        parse_mode='Markdown'
-    )
-
-async def guilds(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    keyboard = InlineKeyboardMarkup([
-        [InlineKeyboardButton("➕ Создать гильдию", callback_data="guild_create")],
-        [InlineKeyboardButton("📋 Топ гильдий", callback_data="guild_top")]
-    ])
-    await update.message.reply_text(
-        "🏆 **Гильдии:**\n\nСоздай свою гильдию или вступи в топовую!",
-        reply_markup=keyboard,
-        parse_mode='Markdown'
-    )
-
-async def guild_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    query = update.callback_query
-    await query.answer()
-    data = query.data
-    user_id = update.effective_user.id
-    
-    if data == "guild_create":
-        await query.edit_message_text(
-            "🏆 **Введи название гильдии:**\n\nНапример: «Драконы»",
-            parse_mode='Markdown'
-        )
-        context.user_data['creating_guild'] = True
+    text = message.text.replace('/broadcast', '').strip()
+    if not text:
+        bot.reply_to(message, "📝 Использование: /broadcast Текст рассылки")
         return
     
-    if data == "guild_top":
-        top = await get_top_guilds()
-        text = "📋 **Топ гильдий:**\n\n"
-        for i, g in enumerate(top[:5], 1):
-            text += f"{i}. **{g['name']}** — {g['members']} участников\n"
-        await query.edit_message_text(text, parse_mode='Markdown')
-
-async def create_guild_handler(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    if context.user_data.get('creating_guild'):
-        name = update.message.text
-        user_id = update.effective_user.id
-        guild_id = await create_guild(name, user_id)
-        context.user_data['creating_guild'] = False
-        await update.message.reply_text(f"🏆 **Гильдия «{name}» создана!**\n\nID: {guild_id}", parse_mode='Markdown')
-
-# ===== КОМАНДА /PROMO =====
-async def promo_command(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    args = context.args
-    if not args:
-        await update.message.reply_text("❌ **Используй:** `/promo КОД`", parse_mode='Markdown')
-        return
-    code = args[0].upper()
-    user_id = update.effective_user.id
-    result = await use_promo(user_id, code)
-    if not result:
-        await update.message.reply_text("❌ **Промокод недействителен или уже использован.**", parse_mode='Markdown')
-        return
-    await update.message.reply_text(
-        f"🎉 **Промокод активирован!**\n\n+{result['reward_amount']} {result['reward_type']}",
-        parse_mode='Markdown'
-    )
-
-async def pvp(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    await update.message.reply_text("⚡ **PvP-арена будет доступна в следующем обновлении!**", parse_mode='Markdown')
-
-async def handle_message(update: Update, context: ContextTypes.DEFAULT_TYPE):
-    text = update.message.text
-    user_id = update.effective_user.id
-
-    if text == "🧙 Профиль":
-        await profile(update, context)
-        return
-    if text == "⚔️ Квесты":
-        await quests(update, context)
-        return
-    if text == "🏆 Гильдии":
-        await guilds(update, context)
-        return
-    if text == "⚡ PvP":
-        await pvp(update, context)
-        return
-    if text == "👑 Админка" and user_id == ADMIN_ID:
-        await update.message.reply_text("👑 **Админ-панель**\n\nВыбери действие:", reply_markup=admin_keyboard, parse_mode='Markdown')
-        return
-    if text == "📞 Поддержка":
-        await update.message.reply_text("📞 **Свяжись с администратором:** @ArchibaldNn", parse_mode='Markdown')
-        return
-
-    if user_id == ADMIN_ID:
-        if text == "📊 Статистика":
-            await admin_stats(update, context)
-            return
-        if text == "💰 Выдать золото":
-            await admin_gold(update, context)
-            return
-        if text == "⭐ Выдать опыт":
-            await admin_exp(update, context)
-            return
-        if text == "⚡ Восстановить энергию":
-            await admin_energy(update, context)
-            return
-        if text == "📋 Топ игроков":
-            await admin_top(update, context)
-            return
-        if text == "🎟️ Создать промокод":
-            await admin_promo(update, context)
-            return
-        if text == "🔙 Выйти из админки":
-            await update.message.reply_text("👋 **Выход из админки.**", parse_mode='Markdown', reply_markup=main_keyboard)
-            return
-
-    if context.user_data.get('admin_gold'):
-        parts = text.split()
-        if len(parts) != 2:
-            await update.message.reply_text("❌ **Используй:** `ID Сумма`", parse_mode='Markdown')
-            return
+    users = get_all_telegram_users()
+    sent = 0
+    
+    for user in users:
         try:
-            user_id = int(parts[0])
-            amount = int(parts[1])
-            await update_player_stats(user_id, 0, amount, 0)
-            context.user_data['admin_gold'] = False
-            await update.message.reply_text(f"✅ **Выдано {amount} 🪙 пользователю {user_id}.**", parse_mode='Markdown')
+            bot.send_message(user[0], f"📢 **Уведомление от администратора:**\n\n{text}", parse_mode='Markdown')
+            sent += 1
+            import time
+            time.sleep(0.05)
         except:
-            await update.message.reply_text("❌ **Ошибка.** Проверь ID.", parse_mode='Markdown')
+            continue
+    
+    bot.reply_to(message, f"✅ Рассылка отправлена {sent} пользователям!")
+
+@bot.message_handler(commands=['verify_user'])
+def verify_user(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав для этой команды.")
         return
-
-    if context.user_data.get('admin_exp'):
-        parts = text.split()
-        if len(parts) != 2:
-            await update.message.reply_text("❌ **Используй:** `ID Сумма`", parse_mode='Markdown')
-            return
-        try:
-            user_id = int(parts[0])
-            amount = int(parts[1])
-            await update_player_stats(user_id, amount, 0, 0)
-            context.user_data['admin_exp'] = False
-            await update.message.reply_text(f"✅ **Выдано {amount} ⭐ пользователю {user_id}.**", parse_mode='Markdown')
-        except:
-            await update.message.reply_text("❌ **Ошибка.** Проверь ID.", parse_mode='Markdown')
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "📝 Использование: /verify_user @username")
         return
+    
+    username = parts[1].replace('@', '')
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE users SET verified = TRUE WHERE username = %s', (username,))
+    conn.commit()
+    conn.close()
+    
+    bot.reply_to(message, f"✅ Пользователь @{username} верифицирован!")
 
-    if context.user_data.get('admin_energy'):
-        try:
-            user_id = int(text)
-            await restore_energy(user_id)
-            context.user_data['admin_energy'] = False
-            await update.message.reply_text(f"✅ **Энергия пользователя {user_id} восстановлена.**", parse_mode='Markdown')
-        except:
-            await update.message.reply_text("❌ **Ошибка.** Введи ID.", parse_mode='Markdown')
+@bot.message_handler(commands=['unverify_user'])
+def unverify_user(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав для этой команды.")
         return
-
-    if context.user_data.get('admin_promo_input'):
-        parts = text.split()
-        if len(parts) != 3:
-            await update.message.reply_text("❌ **Используй:** `КОД КОЛИЧЕСТВО АКТИВАЦИЙ`", parse_mode='Markdown')
-            return
-        code = parts[0].upper()
-        amount = int(parts[1])
-        uses = int(parts[2])
-        reward_type = context.user_data.get('promo_type', 'gold')
-        await create_promo(code, reward_type, amount, uses)
-        context.user_data['admin_promo_input'] = False
-        await update.message.reply_text(
-            f"✅ **Промокод `{code}` создан!**\n\n{amount} {reward_type}, {uses} активаций",
-            parse_mode='Markdown'
-        )
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "📝 Использование: /unverify_user @username")
         return
+    
+    username = parts[1].replace('@', '')
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE users SET verified = FALSE WHERE username = %s', (username,))
+    conn.commit()
+    conn.close()
+    
+    bot.reply_to(message, f"❌ Пользователь @{username} лишён верификации!")
 
-    if context.user_data.get('creating_guild'):
-        await create_guild_handler(update, context)
+@bot.message_handler(commands=['pending'])
+def pending_users(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ У вас нет прав для этой команды.")
         return
+    
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT username, email, joined FROM users WHERE verified = FALSE ORDER BY joined DESC LIMIT 10')
+    users = c.fetchall()
+    conn.close()
+    
+    if not users:
+        bot.reply_to(message, "📭 Нет ожидающих верификации пользователей.")
+        return
+    
+    text = "📋 **Ожидают верификации:**\n\n"
+    for user in users:
+        text += f"👤 @{user[0]} | 📧 {user[1]} | 📅 {user[2].strftime('%d.%m.%Y')}\n"
+    
+    bot.reply_to(message, text, parse_mode='Markdown')
 
-async def start_web_server():
-    app = web.Application()
-    app.router.add_get('/health', lambda r: web.Response(text="OK"))
-    runner = web.AppRunner(app)
-    await runner.setup()
-    port = int(os.environ.get('PORT', 10000))
-    site = web.TCPSite(runner, '0.0.0.0', port)
-    await site.start()
-    print(f"✅ Веб-сервер запущен на порту {port}")
+# ============================================
+# === КОЛБЭКИ ДЛЯ КНОПОК ===
+# ============================================
 
-async def main():
-    await init_db()
-    application = Application.builder().token(TOKEN).build()
-    application.add_handler(CommandHandler("start", start))
-    application.add_handler(CommandHandler("promo", promo_command))
-    application.add_handler(CallbackQueryHandler(quest_handler, pattern="^(quest_|restore)"))
-    application.add_handler(CallbackQueryHandler(guild_handler, pattern="^guild_"))
-    application.add_handler(CallbackQueryHandler(promo_create_handler, pattern="^promo_"))
-    application.add_handler(MessageHandler(filters.TEXT & ~filters.COMMAND, handle_message))
-    print("🚀 Игровой бот с промокодами запущен!")
-    await application.initialize()
-    await application.start()
-    await application.updater.start_polling()
-    await start_web_server()
-    await asyncio.Event().wait()
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    if call.data == 'news':
+        bot.answer_callback_query(call.id, "📰 Новости скоро появятся!")
+        bot.send_message(call.message.chat.id, "📰 **Раздел новостей в разработке.**\nСледите за обновлениями!", parse_mode='Markdown')
+    
+    elif call.data == 'events':
+        bot.answer_callback_query(call.id, "🎮 Ивенты скоро появятся!")
+        bot.send_message(call.message.chat.id, "🎮 **Раздел ивентов в разработке.**\nСкоро анонсы!", parse_mode='Markdown')
+    
+    elif call.data == 'profile':
+        profile(call.message)
 
-if __name__ == "__main__":
-    asyncio.run(main())
+# ============================================
+# === ЗАПУСК БОТА ===
+# ============================================
+
+if __name__ == '__main__':
+    init_db()
+    print('🤖 Бот BattleZ запущен!')
+    print('📅 Дата:', datetime.now())
+    print('👑 Админ ID:', ADMIN_IDS)
+    print('🗄️ База данных: PostgreSQL (Render)')
+    print('=' * 40)
+    bot.infinity_polling()
