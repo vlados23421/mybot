@@ -1,144 +1,179 @@
-import asyncpg
+# database.py
 import os
+import psycopg2
+from psycopg2.extras import RealDictCursor
+from urllib.parse import urlparse
 
-DATABASE_URL = os.getenv("DATABASE_URL")
+# ============================================
+# === ПОДКЛЮЧЕНИЕ К БАЗЕ ДАННЫХ ===
+# ============================================
 
-async def get_conn():
-    return await asyncpg.connect(DATABASE_URL)
+DATABASE_URL = os.environ.get('DATABASE_URL', 'postgresql://user:password@localhost:5432/battlez')
 
-async def init_db():
-    conn = await get_conn()
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS players (
-            user_id BIGINT PRIMARY KEY,
-            username TEXT,
-            level INTEGER DEFAULT 1,
-            exp INTEGER DEFAULT 0,
-            gold INTEGER DEFAULT 0,
-            energy INTEGER DEFAULT 100,
-            guild_id INTEGER
-        )
-    ''')
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS guilds (
-            id SERIAL PRIMARY KEY,
-            name TEXT,
-            leader_id BIGINT,
-            created_at TIMESTAMP DEFAULT NOW()
-        )
-    ''')
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS pvp_history (
-            id SERIAL PRIMARY KEY,
-            winner_id BIGINT,
-            loser_id BIGINT,
-            date TIMESTAMP DEFAULT NOW()
-        )
-    ''')
-    await conn.execute('''
-        CREATE TABLE IF NOT EXISTS promo_codes (
-            code TEXT PRIMARY KEY,
-            reward_type TEXT,   -- 'gold', 'exp', 'energy'
-            reward_amount INTEGER,
-            uses_left INTEGER
-        )
-    ''')
-    await conn.close()
+def get_db_connection():
+    """Подключение к PostgreSQL"""
+    return psycopg2.connect(DATABASE_URL)
 
-async def get_player(user_id):
-    conn = await get_conn()
-    player = await conn.fetchrow("SELECT * FROM players WHERE user_id = $1", user_id)
-    await conn.close()
-    return player
+def get_db_cursor():
+    """Подключение с курсором для dict"""
+    conn = get_db_connection()
+    return conn, conn.cursor(cursor_factory=RealDictCursor)
 
-async def create_player(user_id, username):
-    conn = await get_conn()
-    await conn.execute('''
-        INSERT INTO players (user_id, username, energy) VALUES ($1, $2, 100)
-        ON CONFLICT (user_id) DO NOTHING
-    ''', user_id, username)
-    await conn.close()
+# ============================================
+# === РАБОТА С ПОЛЬЗОВАТЕЛЯМИ ===
+# ============================================
 
-async def update_player_stats(user_id, exp, gold, energy):
-    conn = await get_conn()
-    await conn.execute(
-        "UPDATE players SET exp = exp + $1, gold = gold + $2, energy = energy - $3 WHERE user_id = $4",
-        exp, gold, energy, user_id
-    )
-    await conn.close()
+def get_user_by_username(username):
+    """Получить пользователя по username"""
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM users WHERE username = %s', (username,))
+    user = c.fetchone()
+    conn.close()
+    return user
 
-async def restore_energy(user_id):
-    conn = await get_conn()
-    await conn.execute("UPDATE players SET energy = 100 WHERE user_id = $1", user_id)
-    await conn.close()
+def get_user_by_email(email):
+    """Получить пользователя по email"""
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM users WHERE email = %s', (email,))
+    user = c.fetchone()
+    conn.close()
+    return user
 
-async def get_total_players():
-    conn = await get_conn()
-    total = await conn.fetchval("SELECT COUNT(*) FROM players")
-    await conn.close()
-    return total
+def create_user(username, email, password_hash):
+    """Создать нового пользователя"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO users (username, email, password_hash, joined, avatar)
+        VALUES (%s, %s, %s, NOW(), %s)
+    ''', (username, email, password_hash, '👤'))
+    conn.commit()
+    conn.close()
 
-# ===== ГИЛЬДИИ =====
-async def get_guild(guild_id):
-    conn = await get_conn()
-    guild = await conn.fetchrow("SELECT * FROM guilds WHERE id = $1", guild_id)
-    await conn.close()
-    return guild
+def verify_user(username):
+    """Верифицировать пользователя"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE users SET verified = TRUE WHERE username = %s', (username,))
+    conn.commit()
+    conn.close()
 
-async def create_guild(name, leader_id):
-    conn = await get_conn()
-    guild_id = await conn.fetchval(
-        "INSERT INTO guilds (name, leader_id) VALUES ($1, $2) RETURNING id",
-        name, leader_id
-    )
-    await conn.execute("UPDATE players SET guild_id = $1 WHERE user_id = $2", guild_id, leader_id)
-    await conn.close()
-    return guild_id
+def unverify_user(username):
+    """Отозвать верификацию"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('UPDATE users SET verified = FALSE WHERE username = %s', (username,))
+    conn.commit()
+    conn.close()
 
-async def get_top_guilds(limit=10):
-    conn = await get_conn()
-    rows = await conn.fetch("""
-        SELECT g.name, COUNT(p.user_id) as members
-        FROM guilds g
-        LEFT JOIN players p ON p.guild_id = g.id
-        GROUP BY g.id, g.name
-        ORDER BY members DESC
-        LIMIT $1
-    """, limit)
-    await conn.close()
-    return rows
+def get_all_users():
+    """Получить всех пользователей"""
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT username, email, verified, joined FROM users ORDER BY joined DESC')
+    users = c.fetchall()
+    conn.close()
+    return users
 
-async def get_top_players(limit=10):
-    conn = await get_conn()
-    rows = await conn.fetch(
-        "SELECT username, level, gold FROM players ORDER BY level DESC, gold DESC LIMIT $1",
-        limit
-    )
-    await conn.close()
-    return rows
+def get_user_stats():
+    """Получить статистику пользователей"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT COUNT(*) FROM users')
+    total = c.fetchone()[0]
+    c.execute('SELECT COUNT(*) FROM users WHERE verified = TRUE')
+    verified = c.fetchone()[0]
+    conn.close()
+    return total, verified
 
-# ===== ПРОМОКОДЫ =====
-async def create_promo(code, reward_type, amount, uses):
-    conn = await get_conn()
-    await conn.execute(
-        "INSERT INTO promo_codes (code, reward_type, reward_amount, uses_left) VALUES ($1, $2, $3, $4)",
-        code, reward_type, amount, uses
-    )
-    await conn.close()
+# ============================================
+# === РАБОТА С КОДАМИ ПОДТВЕРЖДЕНИЯ ===
+# ============================================
 
-async def use_promo(user_id, code):
-    conn = await get_conn()
-    promo = await conn.fetchrow("SELECT * FROM promo_codes WHERE code = $1 AND uses_left > 0", code)
-    if not promo:
-        await conn.close()
-        return None
-    player = await get_player(user_id)
-    if promo['reward_type'] == 'gold':
-        await conn.execute("UPDATE players SET gold = gold + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
-    elif promo['reward_type'] == 'exp':
-        await conn.execute("UPDATE players SET exp = exp + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
-    elif promo['reward_type'] == 'energy':
-        await conn.execute("UPDATE players SET energy = energy + $1 WHERE user_id = $2", promo['reward_amount'], user_id)
-    await conn.execute("UPDATE promo_codes SET uses_left = uses_left - 1 WHERE code = $1", code)
-    await conn.close()
-    return promo
+def save_verification_code(email, username, code):
+    """Сохранить код подтверждения"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO verification_codes (email, username, code, expires_at)
+        VALUES (%s, %s, %s, NOW() + INTERVAL '5 minutes')
+    ''', (email, username, code))
+    conn.commit()
+    conn.close()
+
+def check_verification_code(code, email):
+    """Проверить код подтверждения"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        SELECT * FROM verification_codes 
+        WHERE code = %s AND email = %s AND used = FALSE AND expires_at > NOW()
+    ''', (code, email))
+    result = c.fetchone()
+    if result:
+        c.execute('UPDATE verification_codes SET used = TRUE WHERE code = %s', (code,))
+        conn.commit()
+        conn.close()
+        return True
+    conn.close()
+    return False
+
+# ============================================
+# === РАБОТА С TELEGRAM-ПОЛЬЗОВАТЕЛЯМИ ===
+# ============================================
+
+def get_telegram_user(telegram_id):
+    """Получить пользователя бота по Telegram ID"""
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM telegram_users WHERE telegram_id = %s', (telegram_id,))
+    user = c.fetchone()
+    conn.close()
+    return user
+
+def register_telegram_user(telegram_id, username, first_name, last_name):
+    """Зарегистрировать пользователя в боте"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('''
+        INSERT INTO telegram_users (telegram_id, username, first_name, last_name)
+        VALUES (%s, %s, %s, %s)
+        ON CONFLICT (telegram_id) DO UPDATE SET
+            username = EXCLUDED.username,
+            first_name = EXCLUDED.first_name,
+            last_name = EXCLUDED.last_name
+    ''', (telegram_id, username, first_name, last_name))
+    conn.commit()
+    conn.close()
+
+def get_all_telegram_users():
+    """Получить всех пользователей бота"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('SELECT telegram_id FROM telegram_users')
+    users = c.fetchall()
+    conn.close()
+    return users
+
+# ============================================
+# === РАБОТА С УВЕДОМЛЕНИЯМИ ===
+# ============================================
+
+def save_notification(message):
+    """Сохранить уведомление в БД"""
+    conn = get_db_connection()
+    c = conn.cursor()
+    c.execute('INSERT INTO notifications (message) VALUES (%s)', (message,))
+    conn.commit()
+    conn.close()
+
+def get_notifications(limit=10):
+    """Получить последние уведомления"""
+    conn = get_db_connection()
+    c = conn.cursor(cursor_factory=RealDictCursor)
+    c.execute('SELECT * FROM notifications ORDER BY sent_at DESC LIMIT %s', (limit,))
+    notifications = c.fetchall()
+    conn.close()
+    return notifications
