@@ -4,14 +4,14 @@ import random
 import telebot
 from telebot import types
 from datetime import datetime
-import database as db  # ← Ваш файл database.py
+import database as db
 
 # ============================================
 # === НАСТРОЙКА БОТА ===
 # ============================================
 
-TOKEN = '8859123911:AAFE7Z6ceQIQ-JzC5xWG06YfIv21G8OaM94'
-ADMIN_IDS = [539015206]  # Ваш Telegram ID
+TOKEN = os.environ.get('BOT_TOKEN')
+ADMIN_IDS = [int(id) for id in os.environ.get('ADMIN_IDS', '539015206').split(',')]
 
 bot = telebot.TeleBot(TOKEN)
 
@@ -23,7 +23,7 @@ def generate_code():
     return str(random.randint(100000, 999999))
 
 def send_code_to_admin(code, email, username):
-    """Отправить код админу"""
+    """Отправить код админу в Telegram"""
     message = f"""
 🔐 **НОВЫЙ КОД ПОДТВЕРЖДЕНИЯ!**
 
@@ -32,21 +32,9 @@ def send_code_to_admin(code, email, username):
 🔑 **Код:** `{code}`
 ⏱ **Действует:** 5 минут
 
-📌 Дайте этот код пользователю.
+📌 Дайте этот код пользователю для входа на сайт.
 """
     bot.send_message(ADMIN_IDS[0], message, parse_mode='Markdown')
-
-def send_code_to_user(telegram_id, code):
-    """Отправить код пользователю"""
-    message = f"""
-🔐 **Ваш код подтверждения BattleZ**
-
-🔑 **Код:** `{code}`
-⏱ **Действует:** 5 минут
-
-🌐 https://battle-z.vercel.app/
-"""
-    bot.send_message(telegram_id, message, parse_mode='Markdown')
 
 # ============================================
 # === КОМАНДЫ ДЛЯ ПОЛЬЗОВАТЕЛЕЙ ===
@@ -54,7 +42,7 @@ def send_code_to_user(telegram_id, code):
 
 @bot.message_handler(commands=['start'])
 def start(message):
-    """Приветствие"""
+    """Приветственное сообщение"""
     user = db.get_telegram_user(message.from_user.id)
     
     if user is None:
@@ -83,12 +71,38 @@ def start(message):
 • Получать уведомления
 
 🚀 **Присоединяйся к BattleZ!**
+
+---
+
+**#BattleZ #ДоброПожаловать**
 """
     bot.send_message(message.chat.id, welcome, parse_mode='Markdown', reply_markup=keyboard)
 
+@bot.message_handler(commands=['help'])
+def help_command(message):
+    """Команда помощи (без админ-команд)"""
+    help_text = """
+📚 **Помощь по BattleZ**
+
+🔹 **Основные команды:**
+/start — Главное меню
+/help — Помощь
+/profile — Мой профиль
+/status — Статус проекта
+
+📌 **Ссылки:**
+🌐 Сайт: https://battle-z.vercel.app/
+📱 Канал: https://t.me/StarWayBuyStarsNews
+
+---
+
+**#BattleZ #Помощь**
+"""
+    bot.reply_to(message, help_text, parse_mode='Markdown')
+
 @bot.message_handler(commands=['profile'])
 def profile(message):
-    """Показать профиль"""
+    """Показать профиль пользователя"""
     user = db.get_telegram_user(message.from_user.id)
     
     if user:
@@ -103,8 +117,13 @@ def profile(message):
 **На сайте:**
 {'✅ Есть аккаунт' if site_user else '❌ Нет аккаунта'}
 {'👑 Верифицирован' if site_user and site_user['verified'] else ''}
+
+---
+⚔️ **BattleZ**
 """
         bot.reply_to(message, text, parse_mode='Markdown')
+    else:
+        bot.reply_to(message, "❌ Вы не зарегистрированы в боте. Напишите /start")
 
 @bot.message_handler(commands=['status'])
 def status(message):
@@ -120,44 +139,108 @@ def status(message):
 🚀 **Релиз:** 19 августа 2026
 
 ---
-
 **#BattleZ #Статус**
 """
     bot.reply_to(message, text, parse_mode='Markdown')
 
 # ============================================
-# === АДМИН-КОМАНДЫ ===
+# === СКРЫТЫЕ АДМИН-КОМАНДЫ (ТОЛЬКО ДЛЯ ВАС) ===
 # ============================================
 
 @bot.message_handler(commands=['stats'])
 def stats(message):
+    """Статистика проекта (скрытая админ-команда)"""
     if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ Нет прав.")
-        return
+        return  # Просто игнорируем, ничего не отвечаем
     
     total, verified = db.get_user_stats()
     bot_users = len(db.get_all_telegram_users())
     
     text = f"""
-📊 **Статистика**
+📊 **Статистика проекта**
 
-👥 Всего: {total}
-👑 Верифицировано: {verified}
-🤖 В боте: {bot_users}
+👥 **Всего:** {total} игроков
+👑 **Верифицировано:** {verified} игроков
+🤖 **В боте:** {bot_users} пользователей
 
-📅 Запуск: 19.08.2026
+📅 **Запуск:** 19 августа 2026
+🚀 **Версия:** 1.0.0
+
+---
+**#BattleZ #Админ #Статистика**
 """
+    bot.reply_to(message, text, parse_mode='Markdown')
+
+@bot.message_handler(commands=['verify_user'])
+def verify_user(message):
+    """Выдать верификацию (скрытая админ-команда)"""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "📝 Использование: /verify_user @username")
+        return
+    
+    username = parts[1].replace('@', '')
+    
+    user = db.get_user_by_username(username)
+    if not user:
+        bot.reply_to(message, f"❌ Пользователь @{username} не найден")
+        return
+    
+    db.verify_user(username)
+    bot.reply_to(message, f"✅ Пользователь @{username} верифицирован!")
+
+@bot.message_handler(commands=['unverify_user'])
+def unverify_user(message):
+    """Отозвать верификацию (скрытая админ-команда)"""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "📝 Использование: /unverify_user @username")
+        return
+    
+    username = parts[1].replace('@', '')
+    
+    user = db.get_user_by_username(username)
+    if not user:
+        bot.reply_to(message, f"❌ Пользователь @{username} не найден")
+        return
+    
+    db.unverify_user(username)
+    bot.reply_to(message, f"❌ Пользователь @{username} лишён верификации!")
+
+@bot.message_handler(commands=['pending'])
+def pending_users(message):
+    """Список ожидающих верификации (скрытая админ-команда)"""
+    if message.from_user.id not in ADMIN_IDS:
+        return
+    
+    users = db.get_all_users()
+    pending = [u for u in users if not u['verified']]
+    
+    if not pending:
+        bot.reply_to(message, "📭 Нет ожидающих верификации пользователей.")
+        return
+    
+    text = "📋 **Ожидают верификации:**\n\n"
+    for u in pending[:10]:
+        text += f"👤 @{u['username']} | 📧 {u['email']} | 📅 {u['joined'].strftime('%d.%m.%Y')}\n"
+    
     bot.reply_to(message, text, parse_mode='Markdown')
 
 @bot.message_handler(commands=['broadcast'])
 def broadcast(message):
+    """Рассылка всем пользователям (скрытая админ-команда)"""
     if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ Нет прав.")
         return
     
     text = message.text.replace('/broadcast', '').strip()
     if not text:
-        bot.reply_to(message, "📝 /broadcast Текст")
+        bot.reply_to(message, "📝 Использование: /broadcast Текст рассылки")
         return
     
     users = db.get_all_telegram_users()
@@ -165,66 +248,17 @@ def broadcast(message):
     
     for user in users:
         try:
-            bot.send_message(user[0], f"📢 {text}", parse_mode='Markdown')
+            bot.send_message(user[0], f"📢 **Уведомление от администратора:**\n\n{text}", parse_mode='Markdown')
             sent += 1
             import time
             time.sleep(0.05)
         except:
             continue
     
-    bot.reply_to(message, f"✅ Отправлено {sent} пользователям!")
-
-@bot.message_handler(commands=['verify_user'])
-def verify_user(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ Нет прав.")
-        return
-    
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "📝 /verify_user @username")
-        return
-    
-    username = parts[1].replace('@', '')
-    db.verify_user(username)
-    bot.reply_to(message, f"✅ @{username} верифицирован!")
-
-@bot.message_handler(commands=['unverify_user'])
-def unverify_user(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ Нет прав.")
-        return
-    
-    parts = message.text.split()
-    if len(parts) < 2:
-        bot.reply_to(message, "📝 /unverify_user @username")
-        return
-    
-    username = parts[1].replace('@', '')
-    db.unverify_user(username)
-    bot.reply_to(message, f"❌ @{username} лишён верификации!")
-
-@bot.message_handler(commands=['pending'])
-def pending(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ Нет прав.")
-        return
-    
-    users = db.get_all_users()
-    pending_users = [u for u in users if not u['verified']]
-    
-    if not pending_users:
-        bot.reply_to(message, "📭 Нет ожидающих.")
-        return
-    
-    text = "📋 **Ожидают верификации:**\n\n"
-    for u in pending_users[:10]:
-        text += f"👤 @{u['username']} | 📧 {u['email']}\n"
-    
-    bot.reply_to(message, text, parse_mode='Markdown')
+    bot.reply_to(message, f"✅ Рассылка отправлена {sent} пользователям!")
 
 # ============================================
-# === КОЛБЭКИ ===
+# === КОЛБЭКИ ДЛЯ КНОПОК ===
 # ============================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -234,17 +268,18 @@ def callback_handler(call):
     elif call.data == 'status':
         status(call.message)
     elif call.data == 'help':
-        bot.send_message(call.message.chat.id, "📚 /help — список команд", parse_mode='Markdown')
+        help_command(call.message)
     
     bot.answer_callback_query(call.id)
 
 # ============================================
-# === ЗАПУСК ===
+# === ЗАПУСК БОТА ===
 # ============================================
 
 if __name__ == '__main__':
     print('🤖 Бот BattleZ запущен!')
-    print('🗄️ База данных: PostgreSQL')
+    print('📅 Дата:', datetime.now())
     print('👑 Админ ID:', ADMIN_IDS)
+    print('🗄️ База данных: PostgreSQL')
     print('=' * 40)
     bot.infinity_polling()
