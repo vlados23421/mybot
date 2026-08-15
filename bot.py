@@ -470,23 +470,29 @@ def echo_all(message):
 # === ЗАПУСК БОТА ===
 # ============================================
 
+# bot.py (добавьте в конец)
+
 if __name__ == '__main__':
     print('=' * 50)
     print('🤖 Бот BattleZ запускается...')
     print('📅 Дата:', datetime.now().strftime('%Y-%m-%d %H:%M:%S'))
-    print('👑 Админ ID:', ADMIN_IDS)
-    print('🗄️ База данных: PostgreSQL')
-    print('=' * 50)
     
-    # Удаляем webhook перед запуском
+    # ===== ПРИНУДИТЕЛЬНОЕ УДАЛЕНИЕ ВСЕХ СЕССИЙ =====
     try:
+        # Удаляем webhook
         bot.remove_webhook()
         print('✅ Webhook удалён')
+        time.sleep(2)
+        
+        # Закрываем все активные соединения
+        bot.session.close()
+        print('✅ Сессия закрыта')
         time.sleep(1)
+        
     except Exception as e:
-        print(f'⚠️ Ошибка удаления webhook: {e}')
+        print(f'⚠️ Ошибка очистки: {e}')
     
-    # Запускаем бота
+    # ===== ЗАПУСК =====
     print('🔄 Запуск polling...')
     print('✅ Бот готов к работе!')
     print('=' * 50)
@@ -496,6 +502,5 @@ if __name__ == '__main__':
     except KeyboardInterrupt:
         print('\n⏹️ Бот остановлен пользователем')
     except Exception as e:
-        print(f'❌ КРИТИЧЕСКАЯ ОШИБКА: {e}')
+        print(f'❌ ОШИБКА: {e}')
         traceback.print_exc()
-        sys.exit(1)
