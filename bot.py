@@ -12,7 +12,6 @@ import traceback
 import database as db
 from http.server import HTTPServer, BaseHTTPRequestHandler
 from functools import lru_cache
-from collections import defaultdict
 
 # ============================================
 # === НАСТРОЙКА БОТА ===
@@ -51,7 +50,7 @@ except Exception as e:
     sys.exit(1)
 
 # ============================================
-# === ВЕБ-СЕРВЕР ДЛЯ ПОРТА ===
+# === ВЕБ-СЕРВЕР ===
 # ============================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -70,7 +69,6 @@ def run_web_server():
 # === ИГРОВЫЕ ДАННЫЕ ===
 # ============================================
 
-# Классы персонажей
 CHARACTERS = {
     'warrior': {'name': 'Воин', 'emoji': '⚔️', 'hp': 120, 'attack': 15, 'defense': 10},
     'mage': {'name': 'Маг', 'emoji': '🔮', 'hp': 80, 'attack': 25, 'defense': 5},
@@ -80,8 +78,18 @@ CHARACTERS = {
     'warlock': {'name': 'Чернокнижник', 'emoji': '🌀', 'hp': 75, 'attack': 28, 'defense': 4}
 }
 
+# Ранги
+RANKS = [
+    {'name': 'Бронза', 'emoji': '🥉', 'min_wins': 0},
+    {'name': 'Серебро', 'emoji': '🥈', 'min_wins': 5},
+    {'name': 'Золото', 'emoji': '🥇', 'min_wins': 15},
+    {'name': 'Платина', 'emoji': '💎', 'min_wins': 30},
+    {'name': 'Алмаз', 'emoji': '💠', 'min_wins': 50},
+    {'name': 'Легенда', 'emoji': '👑', 'min_wins': 100}
+]
+
 # ============================================
-# === МАГАЗИН ===
+# === МАГАЗИН ЗА ЗВЁЗДЫ ===
 # ============================================
 
 SHOP = {
@@ -89,50 +97,51 @@ SHOP = {
         'name': 'Оружие',
         'emoji': '⚔️',
         'items': [
-            {'id': 'sword', 'name': 'Стальной меч', 'emoji': '🗡️', 'price': 50, 'stats': {'attack': 5}},
-            {'id': 'bow', 'name': 'Длинный лук', 'emoji': '🏹', 'price': 40, 'stats': {'attack': 4}},
-            {'id': 'staff', 'name': 'Магический посох', 'emoji': '🔮', 'price': 60, 'stats': {'attack': 6}},
-            {'id': 'axe', 'name': 'Боевой топор', 'emoji': '🪓', 'price': 55, 'stats': {'attack': 7}},
-            {'id': 'dagger', 'name': 'Кинжал тьмы', 'emoji': '🗡️', 'price': 45, 'stats': {'attack': 5}},
-            {'id': 'hammer', 'name': 'Молот грома', 'emoji': '🔨', 'price': 70, 'stats': {'attack': 8}},
+            {'id': 'sword', 'name': 'Стальной меч', 'emoji': '🗡️', 'price_stars': 5, 'stats': {'attack': 5}},
+            {'id': 'bow', 'name': 'Длинный лук', 'emoji': '🏹', 'price_stars': 4, 'stats': {'attack': 4}},
+            {'id': 'staff', 'name': 'Магический посох', 'emoji': '🔮', 'price_stars': 6, 'stats': {'attack': 6}},
+            {'id': 'axe', 'name': 'Боевой топор', 'emoji': '🪓', 'price_stars': 7, 'stats': {'attack': 7}},
+            {'id': 'dagger', 'name': 'Кинжал тьмы', 'emoji': '🗡️', 'price_stars': 5, 'stats': {'attack': 5}},
+            {'id': 'hammer', 'name': 'Молот грома', 'emoji': '🔨', 'price_stars': 8, 'stats': {'attack': 8}},
         ]
     },
     'armor': {
         'name': 'Броня',
         'emoji': '🛡️',
         'items': [
-            {'id': 'leather', 'name': 'Кожаная броня', 'emoji': '🥾', 'price': 30, 'stats': {'defense': 3}},
-            {'id': 'chainmail', 'name': 'Кольчуга', 'emoji': '⛓️', 'price': 50, 'stats': {'defense': 5}},
-            {'id': 'plate', 'name': 'Латы', 'emoji': '🛡️', 'price': 80, 'stats': {'defense': 8}},
-            {'id': 'robe', 'name': 'Магическая мантия', 'emoji': '👘', 'price': 45, 'stats': {'defense': 4}},
-            {'id': 'shield', 'name': 'Щит стража', 'emoji': '🛡️', 'price': 60, 'stats': {'defense': 6}},
+            {'id': 'leather', 'name': 'Кожаная броня', 'emoji': '🥾', 'price_stars': 3, 'stats': {'defense': 3}},
+            {'id': 'chainmail', 'name': 'Кольчуга', 'emoji': '⛓️', 'price_stars': 5, 'stats': {'defense': 5}},
+            {'id': 'plate', 'name': 'Латы', 'emoji': '🛡️', 'price_stars': 8, 'stats': {'defense': 8}},
+            {'id': 'robe', 'name': 'Магическая мантия', 'emoji': '👘', 'price_stars': 4, 'stats': {'defense': 4}},
+            {'id': 'shield', 'name': 'Щит стража', 'emoji': '🛡️', 'price_stars': 6, 'stats': {'defense': 6}},
         ]
     },
     'potions': {
         'name': 'Зелья',
         'emoji': '🧪',
         'items': [
-            {'id': 'health_potion', 'name': 'Зелье здоровья', 'emoji': '❤️', 'price': 20, 'stats': {'heal': 30}},
-            {'id': 'big_health', 'name': 'Большое зелье', 'emoji': '💖', 'price': 40, 'stats': {'heal': 60}},
-            {'id': 'exp_potion', 'name': 'Зелье опыта', 'emoji': '📈', 'price': 35, 'stats': {'exp': 20}},
+            {'id': 'health_potion', 'name': 'Зелье здоровья', 'emoji': '❤️', 'price_stars': 2, 'stats': {'heal': 30}},
+            {'id': 'big_health', 'name': 'Большое зелье', 'emoji': '💖', 'price_stars': 4, 'stats': {'heal': 60}},
+            {'id': 'exp_potion', 'name': 'Зелье опыта', 'emoji': '📈', 'price_stars': 3, 'stats': {'exp': 20}},
         ]
     },
     'boosts': {
         'name': 'Бусты',
         'emoji': '⚡',
         'items': [
-            {'id': 'attack_boost', 'name': 'Буст атаки', 'emoji': '⚔️', 'price': 25, 'stats': {'attack_boost': 5}},
-            {'id': 'defense_boost', 'name': 'Буст защиты', 'emoji': '🛡️', 'price': 25, 'stats': {'defense_boost': 5}},
-            {'id': 'exp_boost', 'name': 'Буст опыта x2', 'emoji': '📈', 'price': 30, 'stats': {'exp_boost': True}},
+            {'id': 'attack_boost', 'name': 'Буст атаки (+5)', 'emoji': '⚔️', 'price_stars': 3, 'stats': {'attack_boost': 5}},
+            {'id': 'defense_boost', 'name': 'Буст защиты (+5)', 'emoji': '🛡️', 'price_stars': 3, 'stats': {'defense_boost': 5}},
+            {'id': 'exp_boost', 'name': 'Буст опыта x2', 'emoji': '📈', 'price_stars': 5, 'stats': {'exp_boost': True}},
         ]
     },
     'skins': {
         'name': 'Скины',
         'emoji': '🎨',
         'items': [
-            {'id': 'golden', 'name': 'Золотой скин', 'emoji': '🌟', 'price': 100, 'stats': {'skin': 'golden'}},
-            {'id': 'dark', 'name': 'Тёмный скин', 'emoji': '🌙', 'price': 80, 'stats': {'skin': 'dark'}},
-            {'id': 'fire', 'name': 'Огненный скин', 'emoji': '🔥', 'price': 90, 'stats': {'skin': 'fire'}},
+            {'id': 'golden', 'name': 'Золотой скин', 'emoji': '🌟', 'price_stars': 15, 'stats': {'skin': 'golden'}},
+            {'id': 'dark', 'name': 'Тёмный скин', 'emoji': '🌙', 'price_stars': 10, 'stats': {'skin': 'dark'}},
+            {'id': 'fire', 'name': 'Огненный скин', 'emoji': '🔥', 'price_stars': 12, 'stats': {'skin': 'fire'}},
+            {'id': 'royal', 'name': 'Королевский скин', 'emoji': '👑', 'price_stars': 20, 'stats': {'skin': 'royal'}},
         ]
     }
 }
@@ -142,46 +151,25 @@ SHOP = {
 # ============================================
 
 ACHIEVEMENTS = {
-    'first_win': {'name': 'Первая победа', 'emoji': '🎯', 'reward': 10, 'desc': 'Одень первую победу'},
-    'warrior_10': {'name': '10 побед', 'emoji': '⚔️', 'reward': 25, 'desc': 'Одень 10 побед'},
-    'warrior_50': {'name': '50 побед', 'emoji': '🏆', 'reward': 50, 'desc': 'Одень 50 побед'},
-    'warrior_100': {'name': '100 побед', 'emoji': '👑', 'reward': 100, 'desc': 'Одень 100 побед'},
-    'level_5': {'name': '5 уровень', 'emoji': '⭐', 'reward': 15, 'desc': 'Достигни 5 уровня'},
-    'level_10': {'name': '10 уровень', 'emoji': '🌟', 'reward': 30, 'desc': 'Достигни 10 уровня'},
-    'level_20': {'name': '20 уровень', 'emoji': '💫', 'reward': 60, 'desc': 'Достигни 20 уровня'},
-    'rich_50': {'name': '50 золота', 'emoji': '💰', 'reward': 10, 'desc': 'Накопи 50 золота'},
-    'rich_200': {'name': '200 золота', 'emoji': '💎', 'reward': 30, 'desc': 'Накопи 200 золота'},
-    'rich_500': {'name': '500 золота', 'emoji': '👑', 'reward': 60, 'desc': 'Накопи 500 золота'},
-    'killer_10': {'name': 'Убийца гоблинов', 'emoji': '👺', 'reward': 20, 'desc': 'Убей 10 гоблинов'},
-    'killer_dragon': {'name': 'Драконоборец', 'emoji': '🐉', 'reward': 50, 'desc': 'Убей дракона'},
-    'collector': {'name': 'Коллекционер', 'emoji': '🎒', 'reward': 30, 'desc': 'Собери 5 предметов'},
-    'merchant': {'name': 'Торговец', 'emoji': '🏪', 'reward': 25, 'desc': 'Купи 3 предмета в магазине'},
+    'first_win': {'name': 'Первая победа', 'emoji': '🎯', 'reward': 2, 'desc': 'Одень первую победу'},
+    'warrior_10': {'name': '10 побед', 'emoji': '⚔️', 'reward': 5, 'desc': 'Одень 10 побед'},
+    'warrior_50': {'name': '50 побед', 'emoji': '🏆', 'reward': 10, 'desc': 'Одень 50 побед'},
+    'warrior_100': {'name': '100 побед', 'emoji': '👑', 'reward': 20, 'desc': 'Одень 100 побед'},
+    'level_5': {'name': '5 уровень', 'emoji': '⭐', 'reward': 3, 'desc': 'Достигни 5 уровня'},
+    'level_10': {'name': '10 уровень', 'emoji': '🌟', 'reward': 5, 'desc': 'Достигни 10 уровня'},
+    'level_20': {'name': '20 уровень', 'emoji': '💫', 'reward': 10, 'desc': 'Достигни 20 уровня'},
+    'rich_50': {'name': '50 золота', 'emoji': '💰', 'reward': 2, 'desc': 'Накопи 50 золота'},
+    'rich_200': {'name': '200 золота', 'emoji': '💎', 'reward': 5, 'desc': 'Накопи 200 золота'},
+    'rich_500': {'name': '500 золота', 'emoji': '👑', 'reward': 10, 'desc': 'Накопи 500 золота'},
+    'collector': {'name': 'Коллекционер', 'emoji': '🎒', 'reward': 5, 'desc': 'Собери 5 предметов'},
+    'merchant': {'name': 'Торговец', 'emoji': '🏪', 'reward': 3, 'desc': 'Купи 3 предмета в магазине'},
 }
 
 # ============================================
-# === ОПТИМИЗАЦИЯ: КЭШ ===
+# === ИГРОВЫЕ СЕССИИ ===
 # ============================================
 
-player_cache = {}
-cache_timeout = 300  # 5 минут
-
-def get_player(telegram_id, username=None):
-    """Получить игрока с кэшированием"""
-    now = time.time()
-    
-    if telegram_id in player_cache:
-        player, timestamp = player_cache[telegram_id]
-        if now - timestamp < cache_timeout:
-            return player
-    
-    # Создаём нового игрока
-    player = create_player(telegram_id, username)
-    player_cache[telegram_id] = (player, now)
-    return player
-
-def save_player(telegram_id, player):
-    """Сохранить игрока в кэш"""
-    player_cache[telegram_id] = (player, time.time())
+player_games = {}
 
 def create_player(telegram_id, username):
     return {
@@ -196,7 +184,7 @@ def create_player(telegram_id, username):
         'level': 1,
         'wins': 0,
         'losses': 0,
-        'gold': 50,
+        'gold': 30,
         'stars': 0,
         'items': [],
         'inventory': {},
@@ -207,7 +195,6 @@ def create_player(telegram_id, username):
         'skin': 'default',
         'buffs': {},
         'total_battles': 0,
-        'kills': {},
         'shop_history': [],
         'joined_at': datetime.now().isoformat()
     }
@@ -218,45 +205,49 @@ def get_player_level(exp):
 def get_next_level_exp(level):
     return level * 50
 
+def get_rank(wins):
+    for rank in reversed(RANKS):
+        if wins >= rank['min_wins']:
+            return rank
+    return RANKS[0]
+
 # ============================================
 # === ФУНКЦИИ МАГАЗИНА ===
 # ============================================
 
-def get_shop_items(category=None):
-    if category and category in SHOP:
-        return SHOP[category]['items']
+def get_all_shop_items():
     all_items = []
     for cat in SHOP.values():
         all_items.extend(cat['items'])
     return all_items
 
 def buy_item(player, item_id):
-    all_items = get_shop_items()
+    all_items = get_all_shop_items()
     item = next((i for i in all_items if i['id'] == item_id), None)
     
     if not item:
         return False, "❌ Товар не найден"
     
-    if player['gold'] < item['price']:
-        return False, f"❌ Недостаточно золота! Нужно {item['price']}"
+    price = item.get('price_stars', 999)
+    if player['stars'] < price:
+        return False, f"❌ Недостаточно звёзд! Нужно {price}⭐"
     
-    player['gold'] -= item['price']
+    player['stars'] -= price
     
-    # Добавляем в инвентарь
     if item_id not in player['inventory']:
         player['inventory'][item_id] = 0
     player['inventory'][item_id] += 1
     player['items'].append(item['name'])
     player['shop_history'].append({
         'item': item['name'],
-        'price': item['price'],
+        'price': price,
         'time': datetime.now().isoformat()
     })
     
-    return True, f"✅ Куплено: {item['emoji']} {item['name']}"
+    return True, f"✅ Куплено: {item['emoji']} {item['name']} (за {price}⭐)"
 
 def use_item(player, item_id):
-    all_items = get_shop_items()
+    all_items = get_all_shop_items()
     item = next((i for i in all_items if i['id'] == item_id), None)
     
     if not item:
@@ -267,7 +258,6 @@ def use_item(player, item_id):
     
     stats = item.get('stats', {})
     
-    # Применяем эффекты
     if 'heal' in stats:
         player['hp'] = min(player['hp'] + stats['heal'], player['max_hp'])
         player['inventory'][item_id] -= 1
@@ -302,8 +292,12 @@ def use_item(player, item_id):
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    player = get_player(user_id, message.from_user.username)
-    save_player(user_id, player)
+    
+    if user_id not in player_games:
+        player_games[user_id] = create_player(user_id, message.from_user.username)
+    
+    player = player_games[user_id]
+    rank = get_rank(player['wins'])
     
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     btns = [
@@ -326,52 +320,20 @@ def start(message):
         keyboard.add(btn)
     
     text = f"""
-🎮 **Добро пожаловать в BattleZ!**
+🎮 **BattleZ — Игровой бот**
 
 Привет, {message.from_user.first_name}! 👋
 
+{rank['emoji']} **Ранг:** {rank['name']}
 {CHARACTERS[player['character']]['emoji']} **Класс:** {CHARACTERS[player['character']]['name']}
 ❤️ **HP:** {player['hp']}/{player['max_hp']}
 ⭐ **Уровень:** {player['level']}
 ⭐ **Звёзд:** {player['stars']}
 💰 **Золота:** {player['gold']}
+🏆 **Побед:** {player['wins']}
 
 📌 **Выбери действие:**
 """
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-# ============================================
-# === МАГАЗИН ===
-# ============================================
-
-@bot.message_handler(commands=['shop'])
-def shop_command(message):
-    show_shop(message)
-
-def show_shop(message, category=None):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    
-    if category:
-        items = SHOP[category]['items']
-        for item in items:
-            btn = types.InlineKeyboardButton(
-                f"{item['emoji']} {item['name']} — {item['price']}⭐",
-                callback_data=f"buy_{item['id']}"
-            )
-            keyboard.add(btn)
-        btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="shop_back")
-        keyboard.add(btn_back)
-        
-        text = f"🏪 **{SHOP[category]['emoji']} {SHOP[category]['name']}**\n\nВыбери товар:"
-    else:
-        for key, cat in SHOP.items():
-            btn = types.InlineKeyboardButton(
-                f"{cat['emoji']} {cat['name']}",
-                callback_data=f"shop_{key}"
-            )
-            keyboard.add(btn)
-        text = "🏪 **Магазин BattleZ**\n\nВыбери категорию:"
-    
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
 # ============================================
@@ -382,7 +344,11 @@ def show_shop(message, category=None):
 def callback_handler(call):
     user_id = call.from_user.id
     data = call.data
-    player = get_player(user_id, call.from_user.username)
+    
+    if user_id not in player_games:
+        player_games[user_id] = create_player(user_id, call.from_user.username)
+    
+    player = player_games[user_id]
     
     # ===== МАГАЗИН =====
     if data == 'shop':
@@ -393,7 +359,7 @@ def callback_handler(call):
     if data.startswith('shop_'):
         category = data.replace('shop_', '')
         if category in SHOP:
-            show_shop(call.message, category)
+            show_shop_category(call.message, category)
         bot.answer_callback_query(call.id)
         return
     
@@ -405,177 +371,130 @@ def callback_handler(call):
     if data.startswith('buy_'):
         item_id = data.replace('buy_', '')
         success, msg = buy_item(player, item_id)
-        save_player(user_id, player)
         bot.answer_callback_query(call.id, msg, show_alert=True)
         if success:
-            show_shop(call.message, get_item_category(item_id))
+            check_achievements(player)
         return
     
-    # ===== ИСПОЛЬЗОВАТЬ ПРЕДМЕТ =====
-    if data.startswith('use_'):
-        item_id = data.replace('use_', '')
-        success, msg = use_item(player, item_id)
-        save_player(user_id, player)
-        bot.answer_callback_query(call.id, msg, show_alert=True)
+    if data == 'exchange_gold':
+        exchange_gold(call.message, player)
+        bot.answer_callback_query(call.id)
         return
     
-    # ===== ОСТАЛЬНЫЕ КОМАНДЫ =====
-    if data == 'battle':
-        battle_start(call.message, player)
-    elif data == 'profile':
-        show_profile(call.message, player)
-    elif data == 'inventory':
-        show_inventory(call.message, player)
-    elif data == 'leaderboard':
-        show_leaderboard(call.message)
-    elif data == 'achievements':
-        show_achievements(call.message, player)
-    elif data == 'stars':
-        show_stars(call.message, player)
-    elif data == 'daily':
-        daily_reward(call.message, player)
-    elif data == 'change_class':
-        change_class(call.message, player)
+    if data == 'exchange_confirm':
+        exchange_gold_confirm(call.message, player)
+        bot.answer_callback_query(call.id)
+        return
     
-    bot.answer_callback_query(call.id)
+    # ===== БИТВА =====
+    if data in ['attack', 'defend', 'flee', 'strong_attack']:
+        handle_battle_action(call, player, data)
+        return
+    
+    # ===== ОСТАЛЬНЫЕ =====
+    commands = {
+        'battle': battle_start,
+        'profile': show_profile,
+        'inventory': show_inventory,
+        'leaderboard': show_leaderboard,
+        'achievements': show_achievements,
+        'stars': show_stars,
+        'daily': daily_reward,
+        'change_class': change_class
+    }
+    
+    if data in commands:
+        commands[data](call.message, player)
+        bot.answer_callback_query(call.id)
+    
+    # ===== СМЕНА КЛАССА =====
+    if data.startswith('class_'):
+        class_key = data.replace('class_', '')
+        if class_key in CHARACTERS:
+            player['character'] = class_key
+            player['hp'] = CHARACTERS[class_key]['hp']
+            player['max_hp'] = CHARACTERS[class_key]['hp']
+            player['attack'] = CHARACTERS[class_key]['attack']
+            player['defense'] = CHARACTERS[class_key]['defense']
+            bot.answer_callback_query(call.id, f"✅ Класс изменён на {CHARACTERS[class_key]['name']}!")
+            bot.edit_message_text(
+                f"✅ **Класс изменён!**\n\nТеперь ты {CHARACTERS[class_key]['emoji']} {CHARACTERS[class_key]['name']}",
+                call.message.chat.id,
+                call.message.message_id,
+                parse_mode='Markdown'
+            )
 
 # ============================================
-# === ВСПОМОГАТЕЛЬНЫЕ ФУНКЦИИ ===
+# === ФУНКЦИИ МАГАЗИНА ===
 # ============================================
 
-def get_item_category(item_id):
-    for cat_key, cat in SHOP.items():
-        for item in cat['items']:
-            if item['id'] == item_id:
-                return cat_key
-    return None
-
-def show_profile(message, player):
-    text = f"""
-👤 **Профиль игрока**
-
-📝 Имя: {message.from_user.first_name}
-📌 @{message.from_user.username or 'не указан'}
-
-{CHARACTERS[player['character']]['emoji']} **{CHARACTERS[player['character']]['name']}**
-⭐ Уровень: {player['level']}
-❤️ HP: {player['hp']}/{player['max_hp']}
-⚔️ Атака: {player['attack']}
-🛡️ Защита: {player['defense']}
-💰 Золото: {player['gold']}
-⭐ Звёзды: {player['stars']}
-🏆 Побед: {player['wins']}
-💀 Поражений: {player['losses']}
-🎒 Предметов: {len(player['items'])}
-💎 Достижений: {len(player['achievements'])}
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-def show_inventory(message, player):
-    if not player['items']:
-        text = "🎒 **Инвентарь пуст**\n\nСражайся и покупай в магазине!"
-    else:
-        text = f"🎒 **Инвентарь** ({len(player['items'])} предметов)\n\n"
-        for item_id, count in player['inventory'].items():
-            if count > 0:
-                item = next((i for i in get_shop_items() if i['id'] == item_id), None)
-                if item:
-                    text += f"{item['emoji']} {item['name']} x{count}\n"
-    
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-def show_leaderboard(message):
-    users = db.get_all_users()
-    text = "🏆 **Таблица лидеров**\n\n"
-    # Сортируем по уровню и звёздам
-    sorted_players = sorted(
-        player_cache.items(),
-        key=lambda x: (x[1][0]['level'], x[1][0]['stars']),
-        reverse=True
-    )[:10]
-    
-    medals = ['🥇', '🥈', '🥉']
-    for i, (uid, (player, _)) in enumerate(sorted_players):
-        medal = medals[i] if i < 3 else f"{i+1}."
-        text += f"{medal} **{player['username'] or 'Аноним'}** — ⭐{player['level']}, 🌟{player['stars']} звёзд\n"
-    
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-def show_achievements(message, player):
-    text = "💎 **Достижения**\n\n"
-    
-    unlocked = player.get('achievements', [])
-    
-    for key, ach in ACHIEVEMENTS.items():
-        if ach['name'] in unlocked:
-            text += f"✅ {ach['emoji']} {ach['name']} (+{ach['reward']}⭐)\n"
-        else:
-            text += f"🔒 {ach['emoji']} {ach['name']} — {ach['desc']}\n"
-    
-    text += f"\n⭐ Всего звёзд: {player['stars']}"
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-def show_stars(message, player):
-    text = f"""
-⭐ **Твои звёзды**
-
-🌟 Звёзд: {player['stars']}
-
-📌 **Как заработать звёзды:**
-• Победы в битвах (+1⭐)
-• Достижения (+5-50⭐)
-• Ежедневные награды (+2-5⭐)
-• Продажа предметов
-• Участие в событиях
-
-💰 **Золото можно обменять на звёзды:**
-100 золота = 1 звезда
-"""
-    keyboard = types.InlineKeyboardMarkup()
-    btn = types.InlineKeyboardButton("🔄 Обменять золото", callback_data="exchange_gold")
-    keyboard.add(btn)
+def show_shop(message):
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    for key, cat in SHOP.items():
+        btn = types.InlineKeyboardButton(
+            f"{cat['emoji']} {cat['name']}",
+            callback_data=f"shop_{key}"
+        )
+        keyboard.add(btn)
+    text = "🏪 **Магазин BattleZ**\n\nВыбери категорию:"
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
-def daily_reward(message, player):
-    today = datetime.now().date()
-    last_daily = player.get('last_daily')
-    
-    if last_daily and datetime.fromisoformat(last_daily).date() == today:
-        bot.send_message(message.chat.id, "🎁 **Сегодня уже получал!**\nПриходи завтра!", parse_mode='Markdown')
-        return
-    
-    reward_gold = random.randint(20, 50)
-    reward_stars = random.randint(1, 3)
-    
-    player['gold'] += reward_gold
-    player['stars'] += reward_stars
-    player['last_daily'] = datetime.now().isoformat()
-    save_player(message.from_user.id, player)
-    
-    text = f"""
-🎁 **Ежедневная награда!**
-
-💰 +{reward_gold} золота
-⭐ +{reward_stars} звёзд
-
-📅 Приходи завтра!
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown')
-
-def change_class(message, player):
+def show_shop_category(message, category):
+    items = SHOP[category]['items']
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    for key, val in CHARACTERS.items():
+    
+    for item in items:
         btn = types.InlineKeyboardButton(
-            f"{val['emoji']} {val['name']}",
-            callback_data=f"class_{key}"
+            f"{item['emoji']} {item['name']} — {item['price_stars']}⭐",
+            callback_data=f"buy_{item['id']}"
         )
         keyboard.add(btn)
     
-    text = "🔄 **Выбери класс:**"
+    btn_back = types.InlineKeyboardButton("🔙 Назад", callback_data="shop_back")
+    keyboard.add(btn_back)
+    
+    text = f"🏪 **{SHOP[category]['emoji']} {SHOP[category]['name']}**\n\nВыбери товар:"
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
+def exchange_gold(message, player):
+    text = f"""
+🔄 **Обмен золота на звёзды**
+
+💰 У тебя: {player['gold']} золота
+⭐ У тебя: {player['stars']} звёзд
+
+📌 **Курс:** 50 золота = 1 звезда
+
+Сколько звёзд хочешь купить?
+"""
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    for i in [1, 2, 3, 5, 10]:
+        price = i * 50
+        if player['gold'] >= price:
+            btn = types.InlineKeyboardButton(
+                f"{i}⭐ ({price}💰)",
+                callback_data=f"exchange_confirm"
+            )
+            keyboard.add(btn)
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="stars"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def exchange_gold_confirm(message, player):
+    # В реальности нужно выбрать количество, упрощённо: 1 звезда за 50 золота
+    if player['gold'] >= 50:
+        player['gold'] -= 50
+        player['stars'] += 1
+        bot.answer_callback_query(message, "✅ Обмен успешен! +1⭐", show_alert=True)
+        show_stars(message, player)
+    else:
+        bot.answer_callback_query(message, "❌ Недостаточно золота!", show_alert=True)
+
+# ============================================
+# === ФУНКЦИИ БИТВЫ ===
+# ============================================
+
 def battle_start(message, player):
-    if player['in_battle']:
+    if player.get('in_battle', False):
         bot.send_message(message.chat.id, "⚔️ **Ты уже в бою!**", parse_mode='Markdown')
         return
     
@@ -588,7 +507,6 @@ def battle_start(message, player):
     
     player['enemy'] = enemy
     player['in_battle'] = True
-    save_player(message.from_user.id, player)
     
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     btns = [
@@ -615,6 +533,292 @@ vs
 """
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
+def handle_battle_action(call, player, action):
+    if not player.get('in_battle', False):
+        bot.answer_callback_query(call.id, "❌ Ты не в бою!", show_alert=True)
+        return
+    
+    enemy = player['enemy']
+    
+    if action == 'attack':
+        damage = random.randint(5, player['attack'] + 5)
+        enemy['hp'] -= damage
+        text = f"⚔️ Ты нанёс {damage} урона!"
+    
+    elif action == 'strong_attack':
+        if player['hp'] < 20:
+            bot.answer_callback_query(call.id, "❌ Слишком мало HP!", show_alert=True)
+            return
+        damage = random.randint(10, player['attack'] + 10)
+        player['hp'] -= 10
+        enemy['hp'] -= damage
+        text = f"💪 Сильный удар! {damage} урона! (-10 HP)"
+    
+    elif action == 'defend':
+        heal = random.randint(5, 15)
+        player['hp'] = min(player['hp'] + heal, player['max_hp'])
+        enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
+        player['hp'] -= enemy_damage
+        text = f"🛡️ Защита! +{heal} HP\nВраг нанёс {enemy_damage} урона"
+    
+    elif action == 'flee':
+        player['in_battle'] = False
+        player['enemy'] = None
+        bot.edit_message_text("🏃 Ты сбежал!", call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, "🏃 Побег!")
+        return
+    
+    # Ход врага
+    if enemy['hp'] > 0:
+        enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
+        player['hp'] -= enemy_damage
+        text += f"\n\n{enemy['emoji']} Враг нанёс {enemy_damage} урона!"
+    
+    # Проверка победы
+    if enemy['hp'] <= 0:
+        player['in_battle'] = False
+        player['enemy'] = None
+        player['wins'] += 1
+        gold_reward = random.randint(5, 20)
+        exp_reward = random.randint(10, 30)
+        player['gold'] += gold_reward
+        player['exp'] += exp_reward
+        
+        # Проверка уровня
+        new_level = get_player_level(player['exp'])
+        level_up = ""
+        if new_level > player['level']:
+            player['level'] = new_level
+            player['max_hp'] += 10
+            player['hp'] = player['max_hp']
+            level_up = f"\n\n🎉 **УРОВЕНЬ ПОВЫШЕН!** ⭐{new_level}"
+        
+        # Проверка достижений
+        check_achievements(player)
+        
+        bot.edit_message_text(
+            f"{text}\n\n💀 **Враг повержен!**\n💰 +{gold_reward} золота\n📈 +{exp_reward} опыта{level_up}",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode='Markdown'
+        )
+        bot.answer_callback_query(call.id, "🎉 Победа!")
+        return
+    
+    # Проверка смерти
+    if player['hp'] <= 0:
+        player['hp'] = 0
+        player['in_battle'] = False
+        player['enemy'] = None
+        player['losses'] += 1
+        bot.edit_message_text(
+            f"{text}\n\n💀 **Ты погиб!**\nВосстанови HP в профиле.",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode='Markdown'
+        )
+        bot.answer_callback_query(call.id, "💀 Поражение!")
+        return
+    
+    # Продолжение боя
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    btns = [
+        ("⚔️ Атаковать", "attack"),
+        ("🛡️ Защищаться", "defend"),
+        ("🏃 Сбежать", "flee"),
+        ("💪 Сильный удар", "strong_attack")
+    ]
+    for text, callback in btns:
+        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
+    
+    battle_text = f"""
+⚔️ **Битва продолжается!**
+
+{CHARACTERS[player['character']]['emoji']} **Ты:** {CHARACTERS[player['character']]['name']}
+❤️ HP: {player['hp']}/{player['max_hp']}
+
+vs
+
+{enemy['emoji']} **Враг:** {enemy['name']}
+❤️ HP: {enemy['hp']}
+
+📌 **Твой ход!**
+"""
+    bot.edit_message_text(
+        battle_text,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+    bot.answer_callback_query(call.id, "⚔️ Ход сделан!")
+
+# ============================================
+# === ФУНКЦИИ ДОСТИЖЕНИЙ ===
+# ============================================
+
+def check_achievements(player):
+    for key, ach in ACHIEVEMENTS.items():
+        if ach['name'] not in player.get('achievements', []):
+            condition_met = False
+            
+            if key == 'first_win' and player['wins'] >= 1:
+                condition_met = True
+            elif key == 'warrior_10' and player['wins'] >= 10:
+                condition_met = True
+            elif key == 'warrior_50' and player['wins'] >= 50:
+                condition_met = True
+            elif key == 'warrior_100' and player['wins'] >= 100:
+                condition_met = True
+            elif key == 'level_5' and player['level'] >= 5:
+                condition_met = True
+            elif key == 'level_10' and player['level'] >= 10:
+                condition_met = True
+            elif key == 'level_20' and player['level'] >= 20:
+                condition_met = True
+            elif key == 'rich_50' and player['gold'] >= 50:
+                condition_met = True
+            elif key == 'rich_200' and player['gold'] >= 200:
+                condition_met = True
+            elif key == 'rich_500' and player['gold'] >= 500:
+                condition_met = True
+            elif key == 'collector' and len(player['items']) >= 5:
+                condition_met = True
+            elif key == 'merchant' and len(player['shop_history']) >= 3:
+                condition_met = True
+            
+            if condition_met:
+                player['achievements'].append(ach['name'])
+                player['stars'] += ach['reward']
+                try:
+                    bot.send_message(
+                        player['telegram_id'],
+                        f"💎 **Новое достижение!**\n\n{ach['emoji']} {ach['name']}\n⭐ +{ach['reward']} звёзд",
+                        parse_mode='Markdown'
+                    )
+                except:
+                    pass
+
+# ============================================
+# === ФУНКЦИИ ОТОБРАЖЕНИЯ ===
+# ============================================
+
+def show_profile(message, player):
+    rank = get_rank(player['wins'])
+    text = f"""
+👤 **Профиль игрока**
+
+📝 Имя: {message.from_user.first_name}
+📌 @{message.from_user.username or 'не указан'}
+
+{rank['emoji']} **Ранг:** {rank['name']}
+{CHARACTERS[player['character']]['emoji']} **Класс:** {CHARACTERS[player['character']]['name']}
+⭐ **Уровень:** {player['level']}
+❤️ **HP:** {player['hp']}/{player['max_hp']}
+⚔️ **Атака:** {player['attack']}
+🛡️ **Защита:** {player['defense']}
+💰 **Золото:** {player['gold']}
+⭐ **Звёзд:** {player['stars']}
+🏆 **Побед:** {player['wins']}
+💀 **Поражений:** {player['losses']}
+🎒 **Предметов:** {len(player['items'])}
+💎 **Достижений:** {len(player['achievements'])}
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+def show_inventory(message, player):
+    if not player['items']:
+        text = "🎒 **Инвентарь пуст**\n\nСражайся и покупай в магазине!"
+    else:
+        text = f"🎒 **Инвентарь** ({len(player['items'])} предметов)\n\n"
+        for item_id, count in player['inventory'].items():
+            if count > 0:
+                all_items = get_all_shop_items()
+                item = next((i for i in all_items if i['id'] == item_id), None)
+                if item:
+                    text += f"{item['emoji']} {item['name']} x{count}\n"
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+def show_leaderboard(message):
+    sorted_players = sorted(
+        player_games.values(),
+        key=lambda x: (x['level'], x['stars']),
+        reverse=True
+    )[:10]
+    
+    text = "🏆 **Таблица лидеров**\n\n"
+    medals = ['🥇', '🥈', '🥉']
+    for i, player in enumerate(sorted_players):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        rank = get_rank(player['wins'])
+        text += f"{medal} **{player['username'] or 'Аноним'}** — {rank['emoji']}{rank['name']}, ⭐{player['level']}, 🌟{player['stars']}⭐\n"
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+def show_achievements(message, player):
+    text = "💎 **Достижения**\n\n"
+    for key, ach in ACHIEVEMENTS.items():
+        if ach['name'] in player.get('achievements', []):
+            text += f"✅ {ach['emoji']} {ach['name']} (+{ach['reward']}⭐)\n"
+        else:
+            text += f"🔒 {ach['emoji']} {ach['name']} — {ach['desc']}\n"
+    text += f"\n⭐ Всего звёзд: {player['stars']}"
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+def show_stars(message, player):
+    text = f"""
+⭐ **Твои звёзды**
+
+🌟 Звёзд: {player['stars']}
+
+📌 **Как заработать звёзды:**
+• Победы в битвах (+1⭐)
+• Достижения (+2-20⭐)
+• Ежедневные награды (+1-3⭐)
+• Обмен золота (50💰 = 1⭐)
+
+💰 **Обменять золото на звёзды**
+"""
+    keyboard = types.InlineKeyboardMarkup()
+    btn = types.InlineKeyboardButton("🔄 Обменять золото (50💰 = 1⭐)", callback_data="exchange_gold")
+    keyboard.add(btn)
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def daily_reward(message, player):
+    today = datetime.now().date()
+    last_daily = player.get('last_daily')
+    
+    if last_daily and datetime.fromisoformat(last_daily).date() == today:
+        bot.send_message(message.chat.id, "🎁 **Сегодня уже получал!**\nПриходи завтра!", parse_mode='Markdown')
+        return
+    
+    reward_gold = random.randint(20, 50)
+    reward_stars = random.randint(1, 3)
+    
+    player['gold'] += reward_gold
+    player['stars'] += reward_stars
+    player['last_daily'] = datetime.now().isoformat()
+    
+    text = f"""
+🎁 **Ежедневная награда!**
+
+💰 +{reward_gold} золота
+⭐ +{reward_stars} звёзд
+
+📅 Приходи завтра!
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown')
+
+def change_class(message, player):
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    for key, val in CHARACTERS.items():
+        btn = types.InlineKeyboardButton(
+            f"{val['emoji']} {val['name']}",
+            callback_data=f"class_{key}"
+        )
+        keyboard.add(btn)
+    text = "🔄 **Выбери класс:**"
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
 # ============================================
 # === ЗАПУСК ===
 # ============================================
@@ -633,7 +837,6 @@ if __name__ == '__main__':
     
     web_thread = threading.Thread(target=run_web_server, daemon=True)
     web_thread.start()
-    
     print('🔄 Запуск polling...')
     print('🎮 Бот готов!')
     print('=' * 60)
