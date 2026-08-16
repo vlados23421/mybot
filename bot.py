@@ -87,11 +87,14 @@ RANKS = [
 ]
 
 # ============================================
-# === НАСТРОЙКИ (хранятся в БД) ===
+# === НАСТРОЙКИ ===
 # ============================================
 
+SETTINGS_FILE = 'settings.json'
+
 DEFAULT_SETTINGS = {
-    'exchange_rate': 50,  # 50 золота = 1 звезда
+    'exchange_rate': 30,  # 30 золота = 1 звезда
+    'stars_to_gold_rate': 15,  # 15 звёзд = 1 золото
     'stars_to_telegram_stars': 10,  # 10 Telegram Stars = 1 внутриигровая звезда
     'daily_gold_min': 20,
     'daily_gold_max': 50,
@@ -102,20 +105,23 @@ DEFAULT_SETTINGS = {
     'event_multiplier': 1.0
 }
 
-def get_settings():
-    """Получить настройки из БД"""
+def load_settings():
     try:
-        # Если есть таблица settings, берём оттуда
-        # Пока используем локальное хранилище
-        if not hasattr(get_settings, 'cache'):
-            get_settings.cache = dict(DEFAULT_SETTINGS)
-        return get_settings.cache
+        with open(SETTINGS_FILE, 'r') as f:
+            settings = json.load(f)
+            # Обновляем значения, если есть новые ключи
+            for key in DEFAULT_SETTINGS:
+                if key not in settings:
+                    settings[key] = DEFAULT_SETTINGS[key]
+            return settings
     except:
         return dict(DEFAULT_SETTINGS)
 
 def save_settings(settings):
-    """Сохранить настройки"""
-    get_settings.cache = settings
+    with open(SETTINGS_FILE, 'w') as f:
+        json.dump(settings, f, indent=4)
+
+SETTINGS = load_settings()
 
 # ============================================
 # === МАГАЗИН ===
@@ -216,60 +222,11 @@ def get_rank(wins):
             return rank
     return RANKS[0]
 
-# ============================================
-# === ФУНКЦИИ МАГАЗИНА ===
-# ============================================
-
 def get_all_shop_items():
     all_items = []
     for cat in SHOP.values():
         all_items.extend(cat['items'])
     return all_items
-
-def buy_item(player, item_id):
-    all_items = get_all_shop_items()
-    item = next((i for i in all_items if i['id'] == item_id), None)
-    
-    if not item:
-        return False, "❌ Товар не найден"
-    
-    settings = get_settings()
-    price = item.get('price_stars', 999)
-    
-    if player['stars'] < price:
-        return False, f"❌ Недостаточно звёзд! Нужно {price}⭐"
-    
-    player['stars'] -= price
-    
-    if item_id not in player['inventory']:
-        player['inventory'][item_id] = 0
-    player['inventory'][item_id] += 1
-    player['items'].append(item['name'])
-    
-    return True, f"✅ Куплено: {item['emoji']} {item['name']} (за {price}⭐)"
-
-def buy_with_real_stars(player, item_id):
-    """Покупка за реальные Telegram Stars"""
-    all_items = get_all_shop_items()
-    item = next((i for i in all_items if i['id'] == item_id), None)
-    
-    if not item:
-        return False, "❌ Товар не найден"
-    
-    price_real = item.get('price_real', 1)
-    settings = get_settings()
-    stars_to_add = price_real * settings.get('stars_to_telegram_stars', 10)
-    
-    # Здесь должна быть интеграция с Telegram Stars API
-    # Пока добавляем звёзды за "реальные" звёзды
-    player['stars'] += stars_to_add
-    
-    if item_id not in player['inventory']:
-        player['inventory'][item_id] = 0
-    player['inventory'][item_id] += 1
-    player['items'].append(item['name'])
-    
-    return True, f"✅ Куплено: {item['emoji']} {item['name']} за {price_real}⭐ реальных звёзд!\n+{stars_to_add}⭐ внутриигровых"
 
 # ============================================
 # === КОМАНДЫ ===
@@ -299,7 +256,6 @@ def start(message):
         ("🌐 Сайт", "site")
     ]
     
-    # Добавляем кнопку админки только для админа
     if user_id in ADMIN_IDS:
         btns.append(("🔧 Админ-панель", "admin_panel"))
     
@@ -338,8 +294,6 @@ def admin_panel_command(message):
     show_admin_panel(message)
 
 def show_admin_panel(message):
-    settings = get_settings()
-    
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     btns = [
         ("📊 Статистика", "admin_stats"),
@@ -358,9 +312,8 @@ def show_admin_panel(message):
     text = f"""
 🔧 **Админ-панель BattleZ**
 
-📊 **Текущие настройки:**
-💱 Курс обмена: {settings.get('exchange_rate', 50)} золота = 1⭐
-⭐ Stars курс: {settings.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐
+💱 Курс: {SETTINGS.get('exchange_rate', 30)}💰 = 1⭐
+⭐ Stars: {SETTINGS.get('stars_to_telegram_stars', 10)} Stars = 1⭐
 
 📌 **Выбери действие:**
 """
@@ -399,9 +352,8 @@ def admin_users(message):
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
 def admin_exchange(message):
-    settings = get_settings()
     keyboard = types.InlineKeyboardMarkup(row_width=3)
-    for val in [30, 40, 50, 60, 70, 80]:
+    for val in [15, 20, 30, 40, 50, 60]:
         btn = types.InlineKeyboardButton(
             f"{val}💰 = 1⭐",
             callback_data=f"set_exchange_{val}"
@@ -412,14 +364,13 @@ def admin_exchange(message):
     text = f"""
 💱 **Курс обмена золота**
 
-📌 **Текущий курс:** {settings.get('exchange_rate', 50)} золота = 1⭐
+📌 **Текущий курс:** {SETTINGS.get('exchange_rate', 30)} золота = 1⭐
 
 Выбери новый курс:
 """
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
 def admin_stars_rate(message):
-    settings = get_settings()
     keyboard = types.InlineKeyboardMarkup(row_width=3)
     for val in [5, 10, 15, 20, 25, 30]:
         btn = types.InlineKeyboardButton(
@@ -432,7 +383,7 @@ def admin_stars_rate(message):
     text = f"""
 ⭐ **Курс обмена Telegram Stars**
 
-📌 **Текущий курс:** {settings.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐
+📌 **Текущий курс:** {SETTINGS.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐
 
 Выбери новый курс:
 """
@@ -449,7 +400,7 @@ def admin_give_item(message):
         keyboard.add(btn)
     keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
     
-    bot.send_message(message.chat.id, "🎮 **Выдать предмет пользователю**\n\nВведи @username в следующем сообщении", parse_mode='Markdown', reply_markup=keyboard)
+    bot.send_message(message.chat.id, "🎮 **Выдать предмет пользователю**\n\nВыбери предмет:", parse_mode='Markdown', reply_markup=keyboard)
 
 def admin_give_stars(message):
     keyboard = types.InlineKeyboardMarkup(row_width=3)
@@ -475,216 +426,8 @@ def admin_reset(message):
     bot.send_message(message.chat.id, "⚠️ **Сбросить все настройки?**", parse_mode='Markdown', reply_markup=keyboard)
 
 # ============================================
-# === КОЛБЭКИ ===
+# === МАГАЗИН ===
 # ============================================
-
-@bot.callback_query_handler(func=lambda call: True)
-def callback_handler(call):
-    user_id = call.from_user.id
-    data = call.data
-    
-    if user_id not in player_games:
-        player_games[user_id] = create_player(user_id, call.from_user.username)
-    
-    player = player_games[user_id]
-    settings = get_settings()
-    
-    # ===== АДМИН-КОЛБЭКИ =====
-    if user_id in ADMIN_IDS:
-        if data == 'admin_panel':
-            show_admin_panel(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_stats':
-            admin_stats(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_users':
-            admin_users(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_exchange':
-            admin_exchange(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_stars_rate':
-            admin_stars_rate(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_give_item':
-            admin_give_item(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_give_stars':
-            admin_give_stars(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_broadcast':
-            admin_broadcast(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data == 'admin_reset':
-            admin_reset(call.message)
-            bot.answer_callback_query(call.id)
-            return
-        
-        if data.startswith('set_exchange_'):
-            val = int(data.replace('set_exchange_', ''))
-            settings['exchange_rate'] = val
-            save_settings(settings)
-            bot.answer_callback_query(call.id, f"✅ Курс установлен: {val}💰 = 1⭐", show_alert=True)
-            admin_panel_command(call.message)
-            return
-        
-        if data.startswith('set_stars_rate_'):
-            val = int(data.replace('set_stars_rate_', ''))
-            settings['stars_to_telegram_stars'] = val
-            save_settings(settings)
-            bot.answer_callback_query(call.id, f"✅ Курс установлен: {val} Telegram Stars = 1⭐", show_alert=True)
-            admin_panel_command(call.message)
-            return
-        
-        if data == 'reset_confirm':
-            save_settings(dict(DEFAULT_SETTINGS))
-            bot.answer_callback_query(call.id, "✅ Настройки сброшены!", show_alert=True)
-            admin_panel_command(call.message)
-            return
-        
-        if data.startswith('give_stars_'):
-            val = int(data.replace('give_stars_', ''))
-            # В реальности нужно выбрать пользователя
-            # Пока выдаём самому себе
-            player['stars'] += val
-            bot.answer_callback_query(call.id, f"✅ Выдано {val}⭐!", show_alert=True)
-            return
-        
-        if data.startswith('give_item_'):
-            item_id = data.replace('give_item_', '')
-            success, msg = buy_item(player, item_id)
-            # Отменяем списание звёзд, т.к. выдаём бесплатно
-            player['stars'] += 1  # возвращаем звезду
-            bot.answer_callback_query(call.id, f"✅ Предмет выдан!", show_alert=True)
-            return
-    
-    # ===== МАГАЗИН С REAL STARS =====
-    if data == 'shop_real':
-        show_shop_real(call.message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data.startswith('buy_real_'):
-        item_id = data.replace('buy_real_', '')
-        success, msg = buy_with_real_stars(player, item_id)
-        bot.answer_callback_query(call.id, msg, show_alert=True)
-        if success:
-            show_shop_real(call.message)
-        return
-    
-    # ===== ОБЫЧНЫЙ МАГАЗИН =====
-    if data == 'shop':
-        show_shop(call.message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data.startswith('shop_'):
-        category = data.replace('shop_', '')
-        if category in SHOP:
-            show_shop_category(call.message, category)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'shop_back':
-        show_shop(call.message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data.startswith('buy_'):
-        item_id = data.replace('buy_', '')
-        success, msg = buy_item(player, item_id)
-        bot.answer_callback_query(call.id, msg, show_alert=True)
-        if success:
-            check_achievements(player)
-        return
-    
-    # ===== БИТВА =====
-    if data in ['attack', 'defend', 'flee', 'strong_attack']:
-        handle_battle_action(call, player, data)
-        return
-    
-    # ===== ОСТАЛЬНЫЕ =====
-    commands = {
-        'battle': battle_start,
-        'profile': show_profile,
-        'inventory': show_inventory,
-        'leaderboard': show_leaderboard,
-        'achievements': show_achievements,
-        'stars': show_stars,
-        'daily': daily_reward,
-        'change_class': change_class
-    }
-    
-    if data in commands:
-        commands[data](call.message, player)
-        bot.answer_callback_query(call.id)
-    
-    if data.startswith('class_'):
-        class_key = data.replace('class_', '')
-        if class_key in CHARACTERS:
-            player['character'] = class_key
-            player['hp'] = CHARACTERS[class_key]['hp']
-            player['max_hp'] = CHARACTERS[class_key]['hp']
-            player['attack'] = CHARACTERS[class_key]['attack']
-            player['defense'] = CHARACTERS[class_key]['defense']
-            bot.answer_callback_query(call.id, f"✅ Класс изменён на {CHARACTERS[class_key]['name']}!")
-            bot.edit_message_text(
-                f"✅ **Класс изменён!**\n\nТеперь ты {CHARACTERS[class_key]['emoji']} {CHARACTERS[class_key]['name']}",
-                call.message.chat.id,
-                call.message.message_id,
-                parse_mode='Markdown'
-            )
-    
-    if data == 'back_to_menu':
-        start(call.message)
-        bot.answer_callback_query(call.id)
-
-# ============================================
-# === МАГАЗИН С REAL STARS ===
-# ============================================
-
-def show_shop_real(message):
-    settings = get_settings()
-    rate = settings.get('stars_to_telegram_stars', 10)
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    
-    # Показываем товары, которые можно купить за реальные звёзды
-    all_items = get_all_shop_items()
-    for item in all_items:
-        if 'price_real' in item:
-            btn = types.InlineKeyboardButton(
-                f"{item['emoji']} {item['name']} — {item['price_real']}⭐",
-                callback_data=f"buy_real_{item['id']}"
-            )
-            keyboard.add(btn)
-    
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="shop"))
-    
-    text = f"""
-⭐ **Магазин за Telegram Stars**
-
-Курс: {rate} Telegram Stars = 1⭐
-
-📌 **Выбери товар:**
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
 def show_shop(message):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
@@ -696,6 +439,7 @@ def show_shop(message):
         keyboard.add(btn)
     
     keyboard.add(types.InlineKeyboardButton("⭐ Купить за Stars", callback_data="shop_real"))
+    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
     
     text = "🏪 **Магазин BattleZ**\n\nВыбери категорию:"
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
@@ -717,130 +461,113 @@ def show_shop_category(message, category):
     text = f"🏪 **{SHOP[category]['emoji']} {SHOP[category]['name']}**\n\nВыбери товар:"
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
-# ============================================
-# === ОСТАЛЬНЫЕ ФУНКЦИИ ===
-# ============================================
-
-# (Здесь код для битвы, профиля, инвентаря и т.д.)
-# Все функции из предыдущих версий остаются
-
-def handle_battle_action(call, player, action):
-    if not player.get('in_battle', False):
-        bot.answer_callback_query(call.id, "❌ Ты не в бою!", show_alert=True)
-        return
-    
-    enemy = player['enemy']
-    
-    if action == 'attack':
-        damage = random.randint(5, player['attack'] + 5)
-        enemy['hp'] -= damage
-        text = f"⚔️ Ты нанёс {damage} урона!"
-    
-    elif action == 'strong_attack':
-        if player['hp'] < 20:
-            bot.answer_callback_query(call.id, "❌ Слишком мало HP!", show_alert=True)
-            return
-        damage = random.randint(10, player['attack'] + 10)
-        player['hp'] -= 10
-        enemy['hp'] -= damage
-        text = f"💪 Сильный удар! {damage} урона! (-10 HP)"
-    
-    elif action == 'defend':
-        heal = random.randint(5, 15)
-        player['hp'] = min(player['hp'] + heal, player['max_hp'])
-        enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
-        player['hp'] -= enemy_damage
-        text = f"🛡️ Защита! +{heal} HP\nВраг нанёс {enemy_damage} урона"
-    
-    elif action == 'flee':
-        player['in_battle'] = False
-        player['enemy'] = None
-        bot.edit_message_text("🏃 Ты сбежал!", call.message.chat.id, call.message.message_id)
-        bot.answer_callback_query(call.id, "🏃 Побег!")
-        return
-    
-    # Ход врага
-    if enemy['hp'] > 0:
-        enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
-        player['hp'] -= enemy_damage
-        text += f"\n\n{enemy['emoji']} Враг нанёс {enemy_damage} урона!"
-    
-    # Проверка победы
-    if enemy['hp'] <= 0:
-        player['in_battle'] = False
-        player['enemy'] = None
-        player['wins'] += 1
-        gold_reward = random.randint(5, 20)
-        exp_reward = random.randint(10, 30)
-        player['gold'] += gold_reward
-        player['exp'] += exp_reward
-        
-        new_level = get_player_level(player['exp'])
-        level_up = ""
-        if new_level > player['level']:
-            player['level'] = new_level
-            player['max_hp'] += 10
-            player['hp'] = player['max_hp']
-            level_up = f"\n\n🎉 **УРОВЕНЬ ПОВЫШЕН!** ⭐{new_level}"
-        
-        check_achievements(player)
-        
-        bot.edit_message_text(
-            f"{text}\n\n💀 **Враг повержен!**\n💰 +{gold_reward} золота\n📈 +{exp_reward} опыта{level_up}",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode='Markdown'
-        )
-        bot.answer_callback_query(call.id, "🎉 Победа!")
-        return
-    
-    # Проверка смерти
-    if player['hp'] <= 0:
-        player['hp'] = 0
-        player['in_battle'] = False
-        player['enemy'] = None
-        player['losses'] += 1
-        bot.edit_message_text(
-            f"{text}\n\n💀 **Ты погиб!**",
-            call.message.chat.id,
-            call.message.message_id,
-            parse_mode='Markdown'
-        )
-        bot.answer_callback_query(call.id, "💀 Поражение!")
-        return
-    
-    # Продолжение боя
+def show_shop_real(message):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    btns = [
-        ("⚔️ Атаковать", "attack"),
-        ("🛡️ Защищаться", "defend"),
-        ("🏃 Сбежать", "flee"),
-        ("💪 Сильный удар", "strong_attack")
-    ]
-    for text, callback in btns:
-        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
     
-    battle_text = f"""
-⚔️ **Битва продолжается!**
+    all_items = get_all_shop_items()
+    real_items = [item for item in all_items if 'price_real' in item]
+    
+    for item in real_items:
+        btn = types.InlineKeyboardButton(
+            f"{item['emoji']} {item['name']} — {item['price_real']}⭐",
+            callback_data=f"buy_real_{item['id']}"
+        )
+        keyboard.add(btn)
+    
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="shop_back"))
+    
+    text = f"""
+⭐ **Магазин за Telegram Stars**
 
-{CHARACTERS[player['character']]['emoji']} **Ты:** {CHARACTERS[player['character']]['name']}
-❤️ HP: {player['hp']}/{player['max_hp']}
+Курс: {SETTINGS.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐
 
-vs
-
-{enemy['emoji']} **Враг:** {enemy['name']}
-❤️ HP: {enemy['hp']}
-
-📌 **Твой ход!**
+📌 **Выбери товар:**
 """
-    bot.edit_message_text(
-        battle_text,
-        call.message.chat.id,
-        call.message.message_id,
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
-    bot.answer_callback_query(call.id, "⚔️ Ход сделан!")
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+# ============================================
+# === ЗВЁЗДЫ ===
+# ============================================
+
+def show_stars(message, player):
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    
+    # Кнопки обмена золота на звёзды
+    for val in [1, 2, 3, 5, 10]:
+        price = val * SETTINGS.get('exchange_rate', 30)
+        if player['gold'] >= price:
+            btn = types.InlineKeyboardButton(
+                f"{val}⭐ ({price}💰)",
+                callback_data=f"buy_stars_{val}"
+            )
+            keyboard.add(btn)
+    
+    keyboard.add(types.InlineKeyboardButton("🔄 Назад", callback_data="back_to_menu"))
+    
+    text = f"""
+⭐ **Твои звёзды**
+
+🌟 Звёзд: {player['stars']}
+💰 Золота: {player['gold']}
+
+📌 **Как заработать звёзды:**
+• Победы в битвах (+1⭐)
+• Достижения (+2-20⭐)
+• Ежедневные награды (+1-3⭐)
+• Обмен золота
+
+💱 **Курс обмена:**
+{SETTINGS.get('exchange_rate', 30)}💰 = 1⭐
+
+📌 **Нажми на кнопку ниже, чтобы обменять:**
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+# ============================================
+# === ОСНОВНЫЕ ФУНКЦИИ ===
+# ============================================
+
+def buy_item(player, item_id):
+    all_items = get_all_shop_items()
+    item = next((i for i in all_items if i['id'] == item_id), None)
+    
+    if not item:
+        return False, "❌ Товар не найден"
+    
+    price = item.get('price_stars', 999)
+    if player['stars'] < price:
+        return False, f"❌ Недостаточно звёзд! Нужно {price}⭐"
+    
+    player['stars'] -= price
+    
+    if item_id not in player['inventory']:
+        player['inventory'][item_id] = 0
+    player['inventory'][item_id] += 1
+    player['items'].append(item['name'])
+    
+    return True, f"✅ Куплено: {item['emoji']} {item['name']} (за {price}⭐)"
+
+def buy_with_real_stars(player, item_id):
+    all_items = get_all_shop_items()
+    item = next((i for i in all_items if i['id'] == item_id), None)
+    
+    if not item:
+        return False, "❌ Товар не найден"
+    
+    price_real = item.get('price_real', 1)
+    
+    # Здесь будет интеграция с Telegram Stars API
+    # Пока просто добавляем предмет
+    if item_id not in player['inventory']:
+        player['inventory'][item_id] = 0
+    player['inventory'][item_id] += 1
+    player['items'].append(item['name'])
+    
+    return True, f"✅ Куплено: {item['emoji']} {item['name']} за {price_real}⭐ реальных звёзд!"
+
+# ============================================
+# === БИТВА ===
+# ============================================
 
 def battle_start(message, player):
     if player.get('in_battle', False):
@@ -882,8 +609,120 @@ vs
 """
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
+def handle_battle_action(call, player, action):
+    if not player.get('in_battle', False):
+        bot.answer_callback_query(call.id, "❌ Ты не в бою!", show_alert=True)
+        return
+    
+    enemy = player['enemy']
+    
+    if action == 'attack':
+        damage = random.randint(5, player['attack'] + 5)
+        enemy['hp'] -= damage
+        text = f"⚔️ Ты нанёс {damage} урона!"
+    
+    elif action == 'strong_attack':
+        if player['hp'] < 20:
+            bot.answer_callback_query(call.id, "❌ Слишком мало HP!", show_alert=True)
+            return
+        damage = random.randint(10, player['attack'] + 10)
+        player['hp'] -= 10
+        enemy['hp'] -= damage
+        text = f"💪 Сильный удар! {damage} урона! (-10 HP)"
+    
+    elif action == 'defend':
+        heal = random.randint(5, 15)
+        player['hp'] = min(player['hp'] + heal, player['max_hp'])
+        enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
+        player['hp'] -= enemy_damage
+        text = f"🛡️ Защита! +{heal} HP\nВраг нанёс {enemy_damage} урона"
+    
+    elif action == 'flee':
+        player['in_battle'] = False
+        player['enemy'] = None
+        bot.edit_message_text("🏃 Ты сбежал!", call.message.chat.id, call.message.message_id)
+        bot.answer_callback_query(call.id, "🏃 Побег!")
+        return
+    
+    if enemy['hp'] > 0:
+        enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
+        player['hp'] -= enemy_damage
+        text += f"\n\n{enemy['emoji']} Враг нанёс {enemy_damage} урона!"
+    
+    if enemy['hp'] <= 0:
+        player['in_battle'] = False
+        player['enemy'] = None
+        player['wins'] += 1
+        gold_reward = random.randint(5, 20)
+        exp_reward = random.randint(10, 30)
+        player['gold'] += gold_reward
+        player['exp'] += exp_reward
+        
+        new_level = get_player_level(player['exp'])
+        level_up = ""
+        if new_level > player['level']:
+            player['level'] = new_level
+            player['max_hp'] += 10
+            player['hp'] = player['max_hp']
+            level_up = f"\n\n🎉 **УРОВЕНЬ ПОВЫШЕН!** ⭐{new_level}"
+        
+        bot.edit_message_text(
+            f"{text}\n\n💀 **Враг повержен!**\n💰 +{gold_reward} золота\n📈 +{exp_reward} опыта{level_up}",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode='Markdown'
+        )
+        bot.answer_callback_query(call.id, "🎉 Победа!")
+        return
+    
+    if player['hp'] <= 0:
+        player['hp'] = 0
+        player['in_battle'] = False
+        player['enemy'] = None
+        player['losses'] += 1
+        bot.edit_message_text(
+            f"{text}\n\n💀 **Ты погиб!**",
+            call.message.chat.id,
+            call.message.message_id,
+            parse_mode='Markdown'
+        )
+        bot.answer_callback_query(call.id, "💀 Поражение!")
+        return
+    
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    btns = [
+        ("⚔️ Атаковать", "attack"),
+        ("🛡️ Защищаться", "defend"),
+        ("🏃 Сбежать", "flee"),
+        ("💪 Сильный удар", "strong_attack")
+    ]
+    for text, callback in btns:
+        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
+    
+    battle_text = f"""
+⚔️ **Битва продолжается!**
+
+{CHARACTERS[player['character']]['emoji']} **Ты:** {CHARACTERS[player['character']]['name']}
+❤️ HP: {player['hp']}/{player['max_hp']}
+
+vs
+
+{enemy['emoji']} **Враг:** {enemy['name']}
+❤️ HP: {enemy['hp']}
+
+📌 **Твой ход!**
+"""
+    bot.edit_message_text(
+        battle_text,
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+    bot.answer_callback_query(call.id, "⚔️ Ход сделан!")
+
 # ============================================
-# === ФУНКЦИИ ОТОБРАЖЕНИЯ ===
+# === ОСТАЛЬНЫЕ ФУНКЦИИ ===
 # ============================================
 
 def show_profile(message, player):
@@ -947,36 +786,7 @@ def show_achievements(message, player):
     text += f"\n⭐ Всего звёзд: {player['stars']}"
     bot.send_message(message.chat.id, text, parse_mode='Markdown')
 
-def show_stars(message, player):
-    text = f"""
-⭐ **Твои звёзды**
-
-🌟 Звёзд: {player['stars']}
-
-📌 **Как заработать звёзды:**
-• Победы в битвах (+1⭐)
-• Достижения (+2-20⭐)
-• Ежедневные награды (+1-3⭐)
-• Обмен золота
-
-💱 **Курс обмена:**
-{get_settings().get('exchange_rate', 50)} золота = 1⭐
-"""
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    for val in [1, 2, 3, 5]:
-        price = val * get_settings().get('exchange_rate', 50)
-        if player['gold'] >= price:
-            btn = types.InlineKeyboardButton(
-                f"{val}⭐ ({price}💰)",
-                callback_data=f"exchange_{val}"
-            )
-            keyboard.add(btn)
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="start"))
-    
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
 def daily_reward(message, player):
-    settings = get_settings()
     today = datetime.now().date()
     last_daily = player.get('last_daily')
     
@@ -984,13 +794,8 @@ def daily_reward(message, player):
         bot.send_message(message.chat.id, "🎁 **Сегодня уже получал!**\nПриходи завтра!", parse_mode='Markdown')
         return
     
-    gold_min = settings.get('daily_gold_min', 20)
-    gold_max = settings.get('daily_gold_max', 50)
-    stars_min = settings.get('daily_stars_min', 1)
-    stars_max = settings.get('daily_stars_max', 3)
-    
-    reward_gold = random.randint(gold_min, gold_max)
-    reward_stars = random.randint(stars_min, stars_max)
+    reward_gold = random.randint(SETTINGS.get('daily_gold_min', 20), SETTINGS.get('daily_gold_max', 50))
+    reward_stars = random.randint(SETTINGS.get('daily_stars_min', 1), SETTINGS.get('daily_stars_max', 3))
     
     player['gold'] += reward_gold
     player['stars'] += reward_stars
@@ -1017,47 +822,216 @@ def change_class(message, player):
     text = "🔄 **Выбери класс:**"
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
-def check_achievements(player):
-    for key, ach in ACHIEVEMENTS.items():
-        if ach['name'] not in player.get('achievements', []):
-            condition_met = False
-            
-            if key == 'first_win' and player['wins'] >= 1:
-                condition_met = True
-            elif key == 'warrior_10' and player['wins'] >= 10:
-                condition_met = True
-            elif key == 'warrior_50' and player['wins'] >= 50:
-                condition_met = True
-            elif key == 'warrior_100' and player['wins'] >= 100:
-                condition_met = True
-            elif key == 'level_5' and player['level'] >= 5:
-                condition_met = True
-            elif key == 'level_10' and player['level'] >= 10:
-                condition_met = True
-            elif key == 'level_20' and player['level'] >= 20:
-                condition_met = True
-            elif key == 'rich_50' and player['gold'] >= 50:
-                condition_met = True
-            elif key == 'rich_200' and player['gold'] >= 200:
-                condition_met = True
-            elif key == 'rich_500' and player['gold'] >= 500:
-                condition_met = True
-            elif key == 'collector' and len(player['items']) >= 5:
-                condition_met = True
-            elif key == 'merchant' and len(player['shop_history']) >= 3:
-                condition_met = True
-            
-            if condition_met:
-                player['achievements'].append(ach['name'])
-                player['stars'] += ach['reward']
-                try:
-                    bot.send_message(
-                        player['telegram_id'],
-                        f"💎 **Новое достижение!**\n\n{ach['emoji']} {ach['name']}\n⭐ +{ach['reward']} звёзд",
-                        parse_mode='Markdown'
-                    )
-                except:
-                    pass
+# ============================================
+# === ОБРАБОТЧИК КОЛБЭКОВ ===
+# ============================================
+
+@bot.callback_query_handler(func=lambda call: True)
+def callback_handler(call):
+    user_id = call.from_user.id
+    data = call.data
+    
+    if user_id not in player_games:
+        player_games[user_id] = create_player(user_id, call.from_user.username)
+    
+    player = player_games[user_id]
+    
+    # ===== АДМИН-КОЛБЭКИ =====
+    if user_id in ADMIN_IDS:
+        if data == 'admin_panel':
+            show_admin_panel(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_stats':
+            admin_stats(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_users':
+            admin_users(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_exchange':
+            admin_exchange(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_stars_rate':
+            admin_stars_rate(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_give_item':
+            admin_give_item(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_give_stars':
+            admin_give_stars(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_broadcast':
+            admin_broadcast(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data == 'admin_reset':
+            admin_reset(call.message)
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data.startswith('set_exchange_'):
+            val = int(data.replace('set_exchange_', ''))
+            SETTINGS['exchange_rate'] = val
+            save_settings(SETTINGS)
+            bot.answer_callback_query(call.id, f"✅ Курс установлен: {val}💰 = 1⭐", show_alert=True)
+            show_admin_panel(call.message)
+            return
+        
+        if data.startswith('set_stars_rate_'):
+            val = int(data.replace('set_stars_rate_', ''))
+            SETTINGS['stars_to_telegram_stars'] = val
+            save_settings(SETTINGS)
+            bot.answer_callback_query(call.id, f"✅ Курс установлен: {val} Stars = 1⭐", show_alert=True)
+            show_admin_panel(call.message)
+            return
+        
+        if data == 'reset_confirm':
+            SETTINGS.update(DEFAULT_SETTINGS)
+            save_settings(SETTINGS)
+            bot.answer_callback_query(call.id, "✅ Настройки сброшены!", show_alert=True)
+            show_admin_panel(call.message)
+            return
+        
+        if data.startswith('give_stars_'):
+            val = int(data.replace('give_stars_', ''))
+            # Здесь нужно выбрать пользователя, пока выдаём себе
+            player['stars'] += val
+            bot.answer_callback_query(call.id, f"✅ Выдано {val}⭐!", show_alert=True)
+            return
+        
+        if data.startswith('give_item_'):
+            item_id = data.replace('give_item_', '')
+            all_items = get_all_shop_items()
+            item = next((i for i in all_items if i['id'] == item_id), None)
+            if item:
+                if item_id not in player['inventory']:
+                    player['inventory'][item_id] = 0
+                player['inventory'][item_id] += 1
+                player['items'].append(item['name'])
+                bot.answer_callback_query(call.id, f"✅ Выдан {item['name']}!", show_alert=True)
+            return
+    
+    # ===== МАГАЗИН =====
+    if data == 'shop':
+        show_shop(call.message)
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data.startswith('shop_'):
+        category = data.replace('shop_', '')
+        if category in SHOP:
+            show_shop_category(call.message, category)
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data == 'shop_back':
+        show_shop(call.message)
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data == 'shop_real':
+        show_shop_real(call.message)
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data.startswith('buy_'):
+        item_id = data.replace('buy_', '')
+        success, msg = buy_item(player, item_id)
+        bot.answer_callback_query(call.id, msg, show_alert=True)
+        if success:
+            for cat_key, cat in SHOP.items():
+                if any(i['id'] == item_id for i in cat['items']):
+                    show_shop_category(call.message, cat_key)
+                    break
+        return
+    
+    if data.startswith('buy_real_'):
+        item_id = data.replace('buy_real_', '')
+        success, msg = buy_with_real_stars(player, item_id)
+        bot.answer_callback_query(call.id, msg, show_alert=True)
+        if success:
+            show_shop_real(call.message)
+        return
+    
+    # ===== ЗВЁЗДЫ =====
+    if data == 'stars':
+        show_stars(call.message, player)
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data.startswith('buy_stars_'):
+        amount = int(data.replace('buy_stars_', ''))
+        price = amount * SETTINGS.get('exchange_rate', 30)
+        if player['gold'] >= price:
+            player['gold'] -= price
+            player['stars'] += amount
+            bot.answer_callback_query(call.id, f"✅ +{amount}⭐ ( -{price}💰)", show_alert=True)
+            show_stars(call.message, player)
+        else:
+            bot.answer_callback_query(call.id, f"❌ Недостаточно золота! Нужно {price}💰", show_alert=True)
+        return
+    
+    # ===== БИТВА =====
+    if data in ['attack', 'defend', 'flee', 'strong_attack']:
+        handle_battle_action(call, player, data)
+        return
+    
+    # ===== ОСТАЛЬНЫЕ =====
+    commands = {
+        'battle': battle_start,
+        'profile': show_profile,
+        'inventory': show_inventory,
+        'leaderboard': show_leaderboard,
+        'achievements': show_achievements,
+        'daily': daily_reward,
+        'change_class': change_class
+    }
+    
+    if data in commands:
+        if data == 'battle':
+            commands[data](call.message, player)
+        else:
+            commands[data](call.message, player)
+        bot.answer_callback_query(call.id)
+        return
+    
+    if data.startswith('class_'):
+        class_key = data.replace('class_', '')
+        if class_key in CHARACTERS:
+            player['character'] = class_key
+            player['hp'] = CHARACTERS[class_key]['hp']
+            player['max_hp'] = CHARACTERS[class_key]['hp']
+            player['attack'] = CHARACTERS[class_key]['attack']
+            player['defense'] = CHARACTERS[class_key]['defense']
+            bot.answer_callback_query(call.id, f"✅ Класс изменён на {CHARACTERS[class_key]['name']}!")
+            bot.edit_message_text(
+                f"✅ **Класс изменён!**\n\nТеперь ты {CHARACTERS[class_key]['emoji']} {CHARACTERS[class_key]['name']}",
+                call.message.chat.id,
+                call.message.message_id,
+                parse_mode='Markdown'
+            )
+        return
+    
+    if data == 'back_to_menu':
+        start(call.message)
+        bot.answer_callback_query(call.id)
+        return
+    
+    bot.answer_callback_query(call.id)
 
 # ============================================
 # === ЗАПУСК ===
