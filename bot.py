@@ -50,7 +50,7 @@ except Exception as e:
     sys.exit(1)
 
 # ============================================
-# === ВЕБ-СЕРВЕР ДЛЯ ПОРТА ===
+# === ВЕБ-СЕРВЕР ===
 # ============================================
 
 class HealthHandler(BaseHTTPRequestHandler):
@@ -253,7 +253,82 @@ def get_all_shop_items():
     return all_items
 
 # ============================================
-# === ZPREMIUM ФУНКЦИИ ===
+# === ПРОМОКОДЫ ===
+# ============================================
+
+PROMOCODES_FILE = 'promocodes.json'
+
+def load_promocodes():
+    try:
+        with open(PROMOCODES_FILE, 'r') as f:
+            return json.load(f)
+    except:
+        return {}
+
+def save_promocodes(promocodes):
+    with open(PROMOCODES_FILE, 'w') as f:
+        json.dump(promocodes, f, indent=4)
+
+PROMOCODES = load_promocodes()
+
+def generate_promo_code():
+    import string
+    return ''.join(random.choices(string.ascii_uppercase + string.digits, k=8))
+
+def create_promo_code(promo_type, value, max_uses=1, expires_in_days=7):
+    code = generate_promo_code()
+    PROMOCODES[code] = {
+        'type': promo_type,
+        'value': value,
+        'max_uses': max_uses,
+        'used': 0,
+        'created_at': datetime.now().isoformat(),
+        'expires_at': (datetime.now() + timedelta(days=expires_in_days)).isoformat(),
+        'active': True
+    }
+    save_promocodes(PROMOCODES)
+    return code
+
+def use_promo_code(player, code):
+    if code not in PROMOCODES:
+        return False, "❌ Промокод не найден"
+    
+    promo = PROMOCODES[code]
+    
+    if not promo.get('active', True):
+        return False, "❌ Промокод неактивен"
+    
+    if promo['used'] >= promo['max_uses']:
+        return False, "❌ Промокод уже использован"
+    
+    expires_at = datetime.fromisoformat(promo['expires_at'])
+    if datetime.now() > expires_at:
+        return False, "❌ Промокод истёк"
+    
+    promo_type = promo['type']
+    value = promo['value']
+    
+    if promo_type == 'stars':
+        player['stars'] += value
+        msg = f"✅ +{value}⭐ по промокоду!"
+    elif promo_type == 'gold':
+        player['gold'] += value
+        msg = f"✅ +{value}💰 по промокоду!"
+    elif promo_type == 'discount':
+        player['discount'] = value
+        msg = f"✅ Скидка {value}% активирована!"
+    elif promo_type == 'premium':
+        player['premium_days'] = value
+        msg = f"✅ Премиум на {value} дней активирован!"
+    else:
+        return False, "❌ Неизвестный тип промокода"
+    
+    promo['used'] += 1
+    save_promocodes(PROMOCODES)
+    return True, msg
+
+# ============================================
+# === ZPREMIUM ===
 # ============================================
 
 def check_zpremium(player):
@@ -296,7 +371,7 @@ def activate_zpremium(player, days):
     return True, f"✅ ZPremium активирован на {days} дней!\n\n🔗 Ссылка на канал: {channel_link}"
 
 # ============================================
-# === КЛАВИАТУРЫ ===
+# === КЛАВИАТУРЫ (все по 2 кнопки в ряд) ===
 # ============================================
 
 def get_main_keyboard(user_id, player):
@@ -314,12 +389,9 @@ def get_main_keyboard(user_id, player):
     ]
     for text, callback in btns:
         keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
-    
     keyboard.add(types.InlineKeyboardButton("🌐 Сайт", url="https://battle-z.vercel.app/"))
-    
     if user_id in ADMIN_IDS:
         keyboard.add(types.InlineKeyboardButton("🔧 Админ-панель", callback_data="admin_panel"))
-    
     return keyboard
 
 def get_admin_keyboard():
@@ -343,11 +415,9 @@ def get_admin_keyboard():
 
 def get_zpremium_plans_keyboard():
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    
     price_7 = SETTINGS.get('zpremium_price_7', 5)
     price_30 = SETTINGS.get('zpremium_price_30', 15)
     price_90 = SETTINGS.get('zpremium_price_90', 35)
-    
     keyboard.add(types.InlineKeyboardButton(f"⭐ 7 дней — {price_7}⭐", callback_data="zpremium_7_days"))
     keyboard.add(types.InlineKeyboardButton(f"🌟 30 дней — {price_30}⭐", callback_data="zpremium_30_days"))
     keyboard.add(types.InlineKeyboardButton(f"👑 90 дней — {price_90}⭐", callback_data="zpremium_90_days"))
@@ -367,8 +437,7 @@ def get_shop_keyboard():
 
 def get_shop_category_keyboard(category):
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    items = SHOP[category]['items']
-    for item in items:
+    for item in SHOP[category]['items']:
         keyboard.add(types.InlineKeyboardButton(
             f"{item['emoji']} {item['name']} — {item['price_stars']}⭐",
             callback_data=f"buy_{item['id']}"
@@ -378,8 +447,7 @@ def get_shop_category_keyboard(category):
 
 def get_shop_real_keyboard():
     keyboard = types.InlineKeyboardMarkup(row_width=2)
-    all_items = get_all_shop_items()
-    for item in all_items:
+    for item in get_all_shop_items():
         if 'price_real' in item:
             keyboard.add(types.InlineKeyboardButton(
                 f"{item['emoji']} {item['name']} — {item['price_real']}⭐",
@@ -423,21 +491,17 @@ def get_change_class_keyboard():
     return keyboard
 
 # ============================================
-# === КОМАНДЫ БОТА ===
+# === КОМАНДЫ ===
 # ============================================
 
 @bot.message_handler(commands=['start'])
 def start(message):
     user_id = message.from_user.id
-    
     if user_id not in player_games:
         player_games[user_id] = create_player(user_id, message.from_user.username)
-    
     player = player_games[user_id]
     rank = get_rank(player['wins'])
-    
     keyboard = get_main_keyboard(user_id, player)
-    
     text = f"""
 🎮 **BattleZ — Игровой бот**
 
@@ -455,6 +519,27 @@ def start(message):
 """
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
+@bot.message_handler(commands=['admin'])
+def admin_panel_command(message):
+    if message.from_user.id not in ADMIN_IDS:
+        bot.reply_to(message, "⛔ Доступ запрещён!")
+        return
+    show_admin_panel(message)
+
+@bot.message_handler(commands=['promo_use'])
+def promo_use_command(message):
+    user_id = message.from_user.id
+    if user_id not in player_games:
+        player_games[user_id] = create_player(user_id, message.from_user.username)
+    player = player_games[user_id]
+    parts = message.text.split()
+    if len(parts) < 2:
+        bot.reply_to(message, "📝 Использование: /promo_use <код>")
+        return
+    code = parts[1].upper()
+    success, msg = use_promo_code(player, code)
+    bot.reply_to(message, msg, parse_mode='Markdown')
+
 # ============================================
 # === ПРОФИЛЬ ===
 # ============================================
@@ -463,14 +548,11 @@ def show_profile(message, player):
     rank = get_rank(player['wins'])
     is_premium = check_zpremium(player)
     days_left = get_zpremium_remaining(player)
-    
     premium_status = "✅ Активен" if is_premium else "❌ Неактивен"
     premium_days = f" ({days_left} дн.)" if is_premium else ""
-    
     keyboard = types.InlineKeyboardMarkup(row_width=2)
     keyboard.add(types.InlineKeyboardButton("👑 ZPremium", callback_data="zpremium_menu"))
     keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
-    
     text = f"""
 👤 **Профиль игрока**
 
@@ -494,22 +576,16 @@ def show_profile(message, player):
 """
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
-# ============================================
-# === ZPREMIUM МЕНЮ ===
-# ============================================
-
 def show_zpremium_menu(message):
     if not SETTINGS.get('zpremium_active', True):
         bot.send_message(message.chat.id, "❌ ZPremium временно отключён администратором")
         return
-    
     keyboard = get_zpremium_plans_keyboard()
     price_7 = SETTINGS.get('zpremium_price_7', 5)
     price_30 = SETTINGS.get('zpremium_price_30', 15)
     price_90 = SETTINGS.get('zpremium_price_90', 35)
-    
     text = f"""
-👑 **ZPremium — Приватный канал BattleZ**
+👑 **ZPremium — Приватный канал**
 
 📌 **Что даёт ZPremium:**
 • 🔗 Доступ к приватному каналу
@@ -529,7 +605,178 @@ def show_zpremium_menu(message):
     bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
 
 # ============================================
-# === ОБРАБОТЧИК КОЛБЭКОВ (ВСЕ КНОПКИ) ===
+# === АДМИН-ФУНКЦИИ ===
+# ============================================
+
+def show_admin_panel(message):
+    keyboard = get_admin_keyboard()
+    text = f"""
+🔧 **Админ-панель BattleZ**
+
+💱 Курс: {SETTINGS.get('exchange_rate', 30)}💰 = 1⭐
+⭐ Stars: {SETTINGS.get('stars_to_telegram_stars', 10)} Stars = 1⭐
+👑 ZPremium: {'✅ Вкл' if SETTINGS.get('zpremium_active', True) else '❌ Выкл'}
+
+📌 **Выбери действие:**
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_stats(message):
+    users = db.get_all_users()
+    total = len(users) if users else 0
+    text = f"""
+📊 **Статистика проекта**
+
+👥 **Всего пользователей:** {total}
+🎮 **Активных игроков:** {len(player_games)}
+💰 **Всего звёзд:** {sum(p['stars'] for p in player_games.values())}
+🏆 **Всего побед:** {sum(p['wins'] for p in player_games.values())}
+
+📅 **Дата:** {datetime.now().strftime('%d.%m.%Y %H:%M')}
+"""
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_users(message):
+    users = db.get_all_users()
+    if not users:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+        bot.send_message(message.chat.id, "📭 Нет пользователей", reply_markup=keyboard)
+        return
+    text = "👥 **Последние пользователи:**\n\n"
+    for u in users[:10]:
+        text += f"👤 {u.get('username') or 'Аноним'}\n"
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_exchange(message):
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    for val in [15, 20, 30, 40, 50, 60]:
+        keyboard.add(types.InlineKeyboardButton(
+            f"{val}💰 = 1⭐",
+            callback_data=f"set_exchange_{val}"
+        ))
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    text = f"""
+💱 **Курс обмена золота**
+
+📌 **Текущий курс:** {SETTINGS.get('exchange_rate', 30)} золота = 1⭐
+
+Выбери новый курс:
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_stars_rate(message):
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    for val in [5, 10, 15, 20, 25, 30]:
+        keyboard.add(types.InlineKeyboardButton(
+            f"{val}⭐ = 1⭐",
+            callback_data=f"set_stars_rate_{val}"
+        ))
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    text = f"""
+⭐ **Курс обмена Telegram Stars**
+
+📌 **Текущий курс:** {SETTINGS.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐
+
+Выбери новый курс:
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_give_item(message):
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    for item in get_all_shop_items()[:10]:
+        keyboard.add(types.InlineKeyboardButton(
+            f"{item['emoji']} {item['name']}",
+            callback_data=f"give_item_{item['id']}"
+        ))
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    bot.send_message(message.chat.id, "🎮 **Выдать предмет пользователю**\n\nВыбери предмет:", parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_give_stars(message):
+    keyboard = types.InlineKeyboardMarkup(row_width=3)
+    for val in [10, 25, 50, 100, 250, 500]:
+        keyboard.add(types.InlineKeyboardButton(
+            f"{val}⭐",
+            callback_data=f"give_stars_{val}"
+        ))
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    bot.send_message(message.chat.id, "💰 **Выдать звёзды пользователю**\n\nВыбери количество:", parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_broadcast(message):
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
+    bot.send_message(message.chat.id, "📢 **Рассылка**\n\nВведи текст для рассылки:", reply_markup=keyboard)
+
+def admin_reset(message):
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    keyboard.add(types.InlineKeyboardButton("✅ Да, сбросить", callback_data="reset_confirm"))
+    keyboard.add(types.InlineKeyboardButton("❌ Отмена", callback_data="admin_panel"))
+    bot.send_message(message.chat.id, "⚠️ **Сбросить все настройки?**", parse_mode='Markdown', reply_markup=keyboard)
+
+def admin_zpremium_handler(call, message):
+    if call.from_user.id not in ADMIN_IDS:
+        return
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    btns = [
+        ("⭐ 7 дней", "set_zpremium_7"),
+        ("🌟 30 дней", "set_zpremium_30"),
+        ("👑 90 дней", "set_zpremium_90"),
+        ("🔗 Ссылка на канал", "set_zpremium_link"),
+        ("🔄 Вкл/Выкл", "toggle_zpremium"),
+        ("🔙 Назад", "admin_panel")
+    ]
+    for text, callback in btns:
+        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
+    price_7 = SETTINGS.get('zpremium_price_7', 5)
+    price_30 = SETTINGS.get('zpremium_price_30', 15)
+    price_90 = SETTINGS.get('zpremium_price_90', 35)
+    is_active = SETTINGS.get('zpremium_active', True)
+    channel_link = SETTINGS.get('zpremium_channel_link', 'https://t.me/+Jiws0_2AxaUzOTUy')
+    text = f"""
+👑 **ZPremium — Настройки**
+
+📌 **Цены:**
+⭐ 7 дней — {price_7}⭐
+🌟 30 дней — {price_30}⭐
+👑 90 дней — {price_90}⭐
+
+📌 **Статус:** {'✅ Активен' if is_active else '❌ Отключён'}
+🔗 **Канал:** {channel_link}
+
+📌 **Выбери действие:**
+"""
+    bot.edit_message_text(text, message.chat.id, message.message_id, parse_mode='Markdown', reply_markup=keyboard)
+    bot.answer_callback_query(call.id)
+
+def admin_promo_handler(call):
+    if call.from_user.id not in ADMIN_IDS:
+        return
+    keyboard = types.InlineKeyboardMarkup(row_width=2)
+    btns = [
+        ("⭐ Создать звёзды", "promo_create_stars"),
+        ("💰 Создать золото", "promo_create_gold"),
+        ("💳 Создать скидку", "promo_create_discount"),
+        ("👑 Создать премиум", "promo_create_premium"),
+        ("📋 Список промокодов", "promo_list"),
+        ("🔙 Назад", "admin_panel")
+    ]
+    for text, callback in btns:
+        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
+    bot.edit_message_text(
+        "🎫 **Управление промокодами**\n\nВыбери действие:",
+        call.message.chat.id,
+        call.message.message_id,
+        parse_mode='Markdown',
+        reply_markup=keyboard
+    )
+    bot.answer_callback_query(call.id)
+
+# ============================================
+# === ОБРАБОТЧИК КОЛБЭКОВ ===
 # ============================================
 
 @bot.callback_query_handler(func=lambda call: True)
@@ -540,9 +787,7 @@ def callback_handler(call):
     
     print(f'📩 Получен callback: {data} от {user_id}')
     
-    # ==========================================
-    # === АДМИН-ПАНЕЛЬ ===
-    # ==========================================
+    # ===== АДМИН =====
     if data == 'admin_panel':
         if user_id not in ADMIN_IDS:
             bot.answer_callback_query(call.id, "⛔ Доступ запрещён!", show_alert=True)
@@ -551,31 +796,20 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         return
     
-    if data == 'admin_stats':
+    if data in ['admin_stats', 'admin_users', 'admin_exchange', 'admin_stars_rate', 'admin_give_item', 'admin_give_stars', 'admin_broadcast', 'admin_reset']:
         if user_id not in ADMIN_IDS:
             return
-        admin_stats(message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'admin_users':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_users(message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'admin_exchange':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_exchange(message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'admin_stars_rate':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_stars_rate(message)
+        funcs = {
+            'admin_stats': admin_stats,
+            'admin_users': admin_users,
+            'admin_exchange': admin_exchange,
+            'admin_stars_rate': admin_stars_rate,
+            'admin_give_item': admin_give_item,
+            'admin_give_stars': admin_give_stars,
+            'admin_broadcast': admin_broadcast,
+            'admin_reset': admin_reset
+        }
+        funcs[data](message)
         bot.answer_callback_query(call.id)
         return
     
@@ -591,42 +825,47 @@ def callback_handler(call):
         admin_promo_handler(call)
         return
     
-    if data == 'admin_give_item':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_give_item(message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'admin_give_stars':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_give_stars(message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'admin_broadcast':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_broadcast(message)
-        bot.answer_callback_query(call.id)
-        return
-    
-    if data == 'admin_reset':
-        if user_id not in ADMIN_IDS:
-            return
-        admin_reset(message)
-        bot.answer_callback_query(call.id)
-        return
-    
     if data == 'back_to_menu':
         start(message)
         bot.answer_callback_query(call.id)
         return
     
-    # ==========================================
-    # === ZPREMIUM ===
-    # ==========================================
+    # ===== ПРОМОКОДЫ =====
+    if data.startswith('promo_'):
+        if user_id not in ADMIN_IDS:
+            return
+        if data == 'promo_list':
+            if not PROMOCODES:
+                bot.answer_callback_query(call.id, "📭 Нет активных промокодов", show_alert=True)
+                return
+            text = "📋 **Список промокодов:**\n\n"
+            for code, promo in list(PROMOCODES.items())[:10]:
+                status = "✅" if promo.get('active', True) else "❌"
+                text += f"{status} `{code}` — {promo['type']} {promo['value']} ({promo['used']}/{promo['max_uses']})\n"
+            bot.send_message(message.chat.id, text, parse_mode='Markdown')
+            bot.answer_callback_query(call.id)
+            return
+        
+        if data.startswith('promo_create_'):
+            promo_type = data.replace('promo_create_', '')
+            values = {'stars': 10, 'gold': 50, 'discount': 20, 'premium': 7}
+            labels = {'stars': '⭐ звёзд', 'gold': '💰 золота', 'discount': '% скидки', 'premium': 'дней премиума'}
+            value = values.get(promo_type, 10)
+            code = create_promo_code(promo_type, value, max_uses=1)
+            text = f"""
+✅ **Промокод создан!**
+
+🔑 **Код:** `{code}`
+📌 **Тип:** {promo_type}
+💰 **Значение:** {value} {labels.get(promo_type, '')}
+📊 **Использований:** 0/1
+⏱ **Действует:** 7 дней
+"""
+            bot.send_message(message.chat.id, text, parse_mode='Markdown')
+            bot.answer_callback_query(call.id, f"✅ Промокод создан: {code}", show_alert=True)
+            return
+    
+    # ===== ZPREMIUM =====
     if data == 'zpremium_menu':
         show_zpremium_menu(message)
         bot.answer_callback_query(call.id)
@@ -636,29 +875,14 @@ def callback_handler(call):
         if user_id not in player_games:
             player_games[user_id] = create_player(user_id, call.from_user.username)
         player = player_games[user_id]
-        
-        days_map = {
-            'zpremium_7_days': 7,
-            'zpremium_30_days': 30,
-            'zpremium_90_days': 90
-        }
+        days_map = {'zpremium_7_days': 7, 'zpremium_30_days': 30, 'zpremium_90_days': 90}
         days = days_map[data]
         success, msg = activate_zpremium(player, days)
-        
         if success:
             keyboard = types.InlineKeyboardMarkup()
-            keyboard.add(types.InlineKeyboardButton(
-                "🔗 Перейти в канал",
-                url=SETTINGS.get('zpremium_channel_link', 'https://t.me/+Jiws0_2AxaUzOTUy')
-            ))
+            keyboard.add(types.InlineKeyboardButton("🔗 Перейти в канал", url=SETTINGS.get('zpremium_channel_link', 'https://t.me/+Jiws0_2AxaUzOTUy')))
             keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="back_to_profile"))
-            bot.edit_message_text(
-                msg,
-                message.chat.id,
-                message.message_id,
-                parse_mode='Markdown',
-                reply_markup=keyboard
-            )
+            bot.edit_message_text(msg, message.chat.id, message.message_id, parse_mode='Markdown', reply_markup=keyboard)
         else:
             bot.answer_callback_query(call.id, msg, show_alert=True)
         return
@@ -671,9 +895,7 @@ def callback_handler(call):
         bot.answer_callback_query(call.id)
         return
     
-    # ==========================================
-    # === МАГАЗИН ===
-    # ==========================================
+    # ===== МАГАЗИН =====
     if data == 'shop':
         show_shop(message)
         bot.answer_callback_query(call.id)
@@ -721,9 +943,7 @@ def callback_handler(call):
             show_shop_real(message)
         return
     
-    # ==========================================
-    # === ЗВЁЗДЫ ===
-    # ==========================================
+    # ===== ЗВЁЗДЫ =====
     if data == 'stars':
         if user_id not in player_games:
             player_games[user_id] = create_player(user_id, call.from_user.username)
@@ -747,9 +967,7 @@ def callback_handler(call):
             bot.answer_callback_query(call.id, f"❌ Недостаточно золота! Нужно {price}💰", show_alert=True)
         return
     
-    # ==========================================
-    # === БИТВА ===
-    # ==========================================
+    # ===== БИТВА =====
     if data in ['attack', 'defend', 'flee', 'strong_attack']:
         if user_id not in player_games:
             player_games[user_id] = create_player(user_id, call.from_user.username)
@@ -757,9 +975,7 @@ def callback_handler(call):
         handle_battle_action(call, player, data)
         return
     
-    # ==========================================
-    # === ОСТАЛЬНЫЕ ===
-    # ==========================================
+    # ===== ОСТАЛЬНЫЕ =====
     if data == 'battle':
         if user_id not in player_games:
             player_games[user_id] = create_player(user_id, call.from_user.username)
@@ -833,253 +1049,140 @@ def callback_handler(call):
             )
         return
     
-    # ==========================================
-    # === ЕСЛИ НИЧЕГО НЕ ПОДОШЛО ===
-    # ==========================================
+    if data == 'back_to_menu':
+        start(message)
+        bot.answer_callback_query(call.id)
+        return
+    
     bot.answer_callback_query(call.id, "⚠️ Команда не найдена", show_alert=True)
-
-# ============================================
-# === АДМИН-ПАНЕЛЬ ===
-# ============================================
-
-@bot.message_handler(commands=['admin'])
-def admin_panel_command(message):
-    if message.from_user.id not in ADMIN_IDS:
-        bot.reply_to(message, "⛔ Доступ запрещён!")
-        return
-    show_admin_panel(message)
-
-def show_admin_panel(message):
-    keyboard = get_admin_keyboard()
-    
-    text = f"""
-🔧 **Админ-панель BattleZ**
-
-💱 Курс: {SETTINGS.get('exchange_rate', 30)}💰 = 1⭐
-⭐ Stars: {SETTINGS.get('stars_to_telegram_stars', 10)} Stars = 1⭐
-👑 ZPremium: {'✅ Вкл' if SETTINGS.get('zpremium_active', True) else '❌ Выкл'}
-
-📌 **Выбери действие:**
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-# ============================================
-# === АДМИН-ФУНКЦИИ ===
-# ============================================
-
-def admin_stats(message):
-    users = db.get_all_users()
-    total = len(users) if users else 0
-    
-    text = f"""
-📊 **Статистика проекта**
-
-👥 **Всего пользователей:** {total}
-🎮 **Активных игроков:** {len(player_games)}
-💰 **Всего звёзд:** {sum(p['stars'] for p in player_games.values())}
-🏆 **Всего побед:** {sum(p['wins'] for p in player_games.values())}
-
-📅 **Дата:** {datetime.now().strftime('%d.%m.%Y %H:%M')}
-"""
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_users(message):
-    users = db.get_all_users()
-    if not users:
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-        bot.send_message(message.chat.id, "📭 Нет пользователей", reply_markup=keyboard)
-        return
-    
-    text = "👥 **Последние пользователи:**\n\n"
-    for u in users[:10]:
-        text += f"👤 {u.get('username') or 'Аноним'}\n"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_exchange(message):
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    for val in [15, 20, 30, 40, 50, 60]:
-        keyboard.add(types.InlineKeyboardButton(
-            f"{val}💰 = 1⭐",
-            callback_data=f"set_exchange_{val}"
-        ))
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    
-    text = f"""
-💱 **Курс обмена золота**
-
-📌 **Текущий курс:** {SETTINGS.get('exchange_rate', 30)} золота = 1⭐
-
-Выбери новый курс:
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_stars_rate(message):
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    for val in [5, 10, 15, 20, 25, 30]:
-        keyboard.add(types.InlineKeyboardButton(
-            f"{val}⭐ = 1⭐",
-            callback_data=f"set_stars_rate_{val}"
-        ))
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    
-    text = f"""
-⭐ **Курс обмена Telegram Stars**
-
-📌 **Текущий курс:** {SETTINGS.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐
-
-Выбери новый курс:
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_give_item(message):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    all_items = get_all_shop_items()
-    for item in all_items[:10]:
-        keyboard.add(types.InlineKeyboardButton(
-            f"{item['emoji']} {item['name']}",
-            callback_data=f"give_item_{item['id']}"
-        ))
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    
-    bot.send_message(message.chat.id, "🎮 **Выдать предмет пользователю**\n\nВыбери предмет:", parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_give_stars(message):
-    keyboard = types.InlineKeyboardMarkup(row_width=3)
-    for val in [10, 25, 50, 100, 250, 500]:
-        keyboard.add(types.InlineKeyboardButton(
-            f"{val}⭐",
-            callback_data=f"give_stars_{val}"
-        ))
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    
-    bot.send_message(message.chat.id, "💰 **Выдать звёзды пользователю**\n\nВыбери количество:", parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_broadcast(message):
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Назад", callback_data="admin_panel"))
-    bot.send_message(message.chat.id, "📢 **Рассылка**\n\nВведи текст для рассылки:", reply_markup=keyboard)
-
-def admin_reset(message):
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    keyboard.add(types.InlineKeyboardButton("✅ Да, сбросить", callback_data="reset_confirm"))
-    keyboard.add(types.InlineKeyboardButton("❌ Отмена", callback_data="admin_panel"))
-    
-    bot.send_message(message.chat.id, "⚠️ **Сбросить все настройки?**", parse_mode='Markdown', reply_markup=keyboard)
-
-def admin_zpremium_handler(call, message):
-    if call.from_user.id not in ADMIN_IDS:
-        return
-    
-    keyboard = types.InlineKeyboardMarkup(row_width=2)
-    btns = [
-        ("⭐ 7 дней", "set_zpremium_7"),
-        ("🌟 30 дней", "set_zpremium_30"),
-        ("👑 90 дней", "set_zpremium_90"),
-        ("🔗 Ссылка на канал", "set_zpremium_link"),
-        ("🔄 Вкл/Выкл", "toggle_zpremium"),
-        ("🔙 Назад", "admin_panel")
-    ]
-    for text, callback in btns:
-        keyboard.add(types.InlineKeyboardButton(text, callback_data=callback))
-    
-    price_7 = SETTINGS.get('zpremium_price_7', 5)
-    price_30 = SETTINGS.get('zpremium_price_30', 15)
-    price_90 = SETTINGS.get('zpremium_price_90', 35)
-    is_active = SETTINGS.get('zpremium_active', True)
-    channel_link = SETTINGS.get('zpremium_channel_link', 'https://t.me/+Jiws0_2AxaUzOTUy')
-    
-    text = f"""
-👑 **ZPremium — Настройки**
-
-📌 **Цены:**
-⭐ 7 дней — {price_7}⭐
-🌟 30 дней — {price_30}⭐
-👑 90 дней — {price_90}⭐
-
-📌 **Статус:** {'✅ Активен' if is_active else '❌ Отключён'}
-🔗 **Канал:** {channel_link}
-
-📌 **Выбери действие:**
-"""
-    bot.edit_message_text(
-        text,
-        message.chat.id,
-        message.message_id,
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
-    bot.answer_callback_query(call.id)
-
-def admin_promo_handler(call):
-    if call.from_user.id not in ADMIN_IDS:
-        return
-    
-    # Здесь можно добавить логику промокодов
-    bot.answer_callback_query(call.id, "🎫 Раздел промокодов в разработке!", show_alert=True)
 
 # ============================================
 # === ОСТАЛЬНЫЕ ФУНКЦИИ ===
 # ============================================
 
 def buy_item(player, item_id):
-    all_items = get_all_shop_items()
-    item = next((i for i in all_items if i['id'] == item_id), None)
-    
+    item = next((i for i in get_all_shop_items() if i['id'] == item_id), None)
     if not item:
         return False, "❌ Товар не найден"
-    
     price = item.get('price_stars', 999)
     if player['stars'] < price:
         return False, f"❌ Недостаточно звёзд! Нужно {price}⭐"
-    
     player['stars'] -= price
-    
     if item_id not in player['inventory']:
         player['inventory'][item_id] = 0
     player['inventory'][item_id] += 1
     player['items'].append(item['name'])
-    
     return True, f"✅ Куплено: {item['emoji']} {item['name']} (за {price}⭐)"
 
 def buy_with_real_stars(player, item_id):
-    all_items = get_all_shop_items()
-    item = next((i for i in all_items if i['id'] == item_id), None)
-    
+    item = next((i for i in get_all_shop_items() if i['id'] == item_id), None)
     if not item:
         return False, "❌ Товар не найден"
-    
     price_real = item.get('price_real', 1)
-    
     if item_id not in player['inventory']:
         player['inventory'][item_id] = 0
     player['inventory'][item_id] += 1
     player['items'].append(item['name'])
-    
     return True, f"✅ Куплено: {item['emoji']} {item['name']} за {price_real}⭐ реальных звёзд!"
+
+def show_shop(message):
+    bot.send_message(message.chat.id, "🏪 **Магазин BattleZ**\n\nВыбери категорию:", parse_mode='Markdown', reply_markup=get_shop_keyboard())
+
+def show_shop_category(message, category):
+    text = f"🏪 **{SHOP[category]['emoji']} {SHOP[category]['name']}**\n\nВыбери товар:"
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=get_shop_category_keyboard(category))
+
+def show_shop_real(message):
+    text = f"⭐ **Магазин за Telegram Stars**\n\nКурс: {SETTINGS.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐\n\n📌 Выбери товар:"
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=get_shop_real_keyboard())
+
+def show_stars(message, player):
+    text = f"""
+⭐ **Твои звёзды**
+
+🌟 Звёзд: {player['stars']}
+💰 Золота: {player['gold']}
+
+💱 **Курс обмена:**
+{SETTINGS.get('exchange_rate', 30)}💰 = 1⭐
+
+📌 **Нажми на кнопку, чтобы обменять:**
+"""
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=get_stars_keyboard(player))
+
+def show_inventory(message, player):
+    if not player['items']:
+        text = "🎒 **Инвентарь пуст**\n\nСражайся и покупай в магазине!"
+    else:
+        text = f"🎒 **Инвентарь** ({len(player['items'])} предметов)\n\n"
+        for item_id, count in player['inventory'].items():
+            if count > 0:
+                item = next((i for i in get_all_shop_items() if i['id'] == item_id), None)
+                if item:
+                    text += f"{item['emoji']} {item['name']} x{count}\n"
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def show_leaderboard(message):
+    sorted_players = sorted(player_games.values(), key=lambda x: (x['level'], x['stars']), reverse=True)[:10]
+    text = "🏆 **Таблица лидеров**\n\n"
+    medals = ['🥇', '🥈', '🥉']
+    for i, player in enumerate(sorted_players):
+        medal = medals[i] if i < 3 else f"{i+1}."
+        rank = get_rank(player['wins'])
+        text += f"{medal} **{player['username'] or 'Аноним'}** — {rank['emoji']}{rank['name']}, ⭐{player['level']}, 🌟{player['stars']}⭐\n"
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def show_achievements(message, player):
+    text = "💎 **Достижения**\n\n"
+    for key, ach in ACHIEVEMENTS.items():
+        if ach['name'] in player.get('achievements', []):
+            text += f"✅ {ach['emoji']} {ach['name']} (+{ach['reward']}⭐)\n"
+        else:
+            text += f"🔒 {ach['emoji']} {ach['name']} — {ach['desc']}\n"
+    text += f"\n⭐ Всего звёзд: {player['stars']}"
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def daily_reward(message, player):
+    today = datetime.now().date()
+    last_daily = player.get('last_daily')
+    if last_daily and datetime.fromisoformat(last_daily).date() == today:
+        keyboard = types.InlineKeyboardMarkup()
+        keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
+        bot.send_message(message.chat.id, "🎁 **Сегодня уже получал!**\nПриходи завтра!", parse_mode='Markdown', reply_markup=keyboard)
+        return
+    reward_gold = random.randint(SETTINGS.get('daily_gold_min', 20), SETTINGS.get('daily_gold_max', 50))
+    reward_stars = random.randint(SETTINGS.get('daily_stars_min', 1), SETTINGS.get('daily_stars_max', 3))
+    player['gold'] += reward_gold
+    player['stars'] += reward_stars
+    player['last_daily'] = datetime.now().isoformat()
+    text = f"""
+🎁 **Ежедневная награда!**
+
+💰 +{reward_gold} золота
+⭐ +{reward_stars} звёзд
+
+📅 Приходи завтра!
+"""
+    keyboard = types.InlineKeyboardMarkup()
+    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+
+def change_class(message, player):
+    bot.send_message(message.chat.id, "🔄 **Выбери класс:**", parse_mode='Markdown', reply_markup=get_change_class_keyboard())
 
 def battle_start(message, player):
     if player.get('in_battle', False):
         bot.send_message(message.chat.id, "⚔️ **Ты уже в бою!**", parse_mode='Markdown')
         return
-    
-    enemy = {
-        'name': random.choice(['Гоблин', 'Скелет', 'Волк', 'Орк', 'Дракон']),
-        'emoji': random.choice(['👺', '💀', '🐺', '👹', '🐉']),
-        'hp': random.randint(30, 80),
-        'attack': random.randint(8, 20)
-    }
-    
+    enemy = {'name': random.choice(['Гоблин', 'Скелет', 'Волк', 'Орк', 'Дракон']), 'emoji': random.choice(['👺', '💀', '🐺', '👹', '🐉']), 'hp': random.randint(30, 80), 'attack': random.randint(8, 20)}
     player['enemy'] = enemy
     player['in_battle'] = True
-    
-    keyboard = get_battle_keyboard()
-    
     text = f"""
 ⚔️ **Битва началась!**
 
@@ -1093,13 +1196,12 @@ vs
 
 📌 **Твой ход!**
 """
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
+    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=get_battle_keyboard())
 
 def handle_battle_action(call, player, action):
     if not player.get('in_battle', False):
         bot.answer_callback_query(call.id, "❌ Ты не в бою!", show_alert=True)
         return
-    
     enemy = player['enemy']
     message = call.message
     chat_id = message.chat.id
@@ -1109,7 +1211,6 @@ def handle_battle_action(call, player, action):
         damage = random.randint(5, player['attack'] + 5)
         enemy['hp'] -= damage
         text = f"⚔️ Ты нанёс {damage} урона!"
-    
     elif action == 'strong_attack':
         if player['hp'] < 20:
             bot.answer_callback_query(call.id, "❌ Слишком мало HP!", show_alert=True)
@@ -1118,14 +1219,12 @@ def handle_battle_action(call, player, action):
         player['hp'] -= 10
         enemy['hp'] -= damage
         text = f"💪 Сильный удар! {damage} урона! (-10 HP)"
-    
     elif action == 'defend':
         heal = random.randint(5, 15)
         player['hp'] = min(player['hp'] + heal, player['max_hp'])
         enemy_damage = max(1, random.randint(1, enemy['attack']) - player['defense'])
         player['hp'] -= enemy_damage
         text = f"🛡️ Защита! +{heal} HP\nВраг нанёс {enemy_damage} урона"
-    
     elif action == 'flee':
         player['in_battle'] = False
         player['enemy'] = None
@@ -1146,7 +1245,6 @@ def handle_battle_action(call, player, action):
         exp_reward = random.randint(10, 30)
         player['gold'] += gold_reward
         player['exp'] += exp_reward
-        
         new_level = get_player_level(player['exp'])
         level_up = ""
         if new_level > player['level']:
@@ -1154,11 +1252,7 @@ def handle_battle_action(call, player, action):
             player['max_hp'] += 10
             player['hp'] = player['max_hp']
             level_up = f"\n\n🎉 **УРОВЕНЬ ПОВЫШЕН!** ⭐{new_level}"
-        
-        bot.edit_message_text(
-            f"{text}\n\n💀 **Враг повержен!**\n💰 +{gold_reward} золота\n📈 +{exp_reward} опыта{level_up}",
-            chat_id, msg_id, parse_mode='Markdown'
-        )
+        bot.edit_message_text(f"{text}\n\n💀 **Враг повержен!**\n💰 +{gold_reward} золота\n📈 +{exp_reward} опыта{level_up}", chat_id, msg_id, parse_mode='Markdown')
         bot.answer_callback_query(call.id, "🎉 Победа!")
         return
     
@@ -1170,8 +1264,6 @@ def handle_battle_action(call, player, action):
         bot.edit_message_text(f"{text}\n\n💀 **Ты погиб!**", chat_id, msg_id, parse_mode='Markdown')
         bot.answer_callback_query(call.id, "💀 Поражение!")
         return
-    
-    keyboard = get_battle_keyboard()
     
     battle_text = f"""
 ⚔️ **Битва продолжается!**
@@ -1186,124 +1278,8 @@ vs
 
 📌 **Твой ход!**
 """
-    bot.edit_message_text(
-        battle_text,
-        chat_id,
-        msg_id,
-        parse_mode='Markdown',
-        reply_markup=keyboard
-    )
+    bot.edit_message_text(battle_text, chat_id, msg_id, parse_mode='Markdown', reply_markup=get_battle_keyboard())
     bot.answer_callback_query(call.id, "⚔️ Ход сделан!")
-
-def show_shop(message):
-    keyboard = get_shop_keyboard()
-    bot.send_message(message.chat.id, "🏪 **Магазин BattleZ**\n\nВыбери категорию:", parse_mode='Markdown', reply_markup=keyboard)
-
-def show_shop_category(message, category):
-    keyboard = get_shop_category_keyboard(category)
-    text = f"🏪 **{SHOP[category]['emoji']} {SHOP[category]['name']}**\n\nВыбери товар:"
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def show_shop_real(message):
-    keyboard = get_shop_real_keyboard()
-    text = f"⭐ **Магазин за Telegram Stars**\n\nКурс: {SETTINGS.get('stars_to_telegram_stars', 10)} Telegram Stars = 1⭐\n\n📌 Выбери товар:"
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def show_stars(message, player):
-    keyboard = get_stars_keyboard(player)
-    
-    text = f"""
-⭐ **Твои звёзды**
-
-🌟 Звёзд: {player['stars']}
-💰 Золота: {player['gold']}
-
-💱 **Курс обмена:**
-{SETTINGS.get('exchange_rate', 30)}💰 = 1⭐
-
-📌 **Нажми на кнопку, чтобы обменять:**
-"""
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def show_inventory(message, player):
-    if not player['items']:
-        text = "🎒 **Инвентарь пуст**\n\nСражайся и покупай в магазине!"
-    else:
-        text = f"🎒 **Инвентарь** ({len(player['items'])} предметов)\n\n"
-        for item_id, count in player['inventory'].items():
-            if count > 0:
-                all_items = get_all_shop_items()
-                item = next((i for i in all_items if i['id'] == item_id), None)
-                if item:
-                    text += f"{item['emoji']} {item['name']} x{count}\n"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def show_leaderboard(message):
-    sorted_players = sorted(
-        player_games.values(),
-        key=lambda x: (x['level'], x['stars']),
-        reverse=True
-    )[:10]
-    
-    text = "🏆 **Таблица лидеров**\n\n"
-    medals = ['🥇', '🥈', '🥉']
-    for i, player in enumerate(sorted_players):
-        medal = medals[i] if i < 3 else f"{i+1}."
-        rank = get_rank(player['wins'])
-        text += f"{medal} **{player['username'] or 'Аноним'}** — {rank['emoji']}{rank['name']}, ⭐{player['level']}, 🌟{player['stars']}⭐\n"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def show_achievements(message, player):
-    text = "💎 **Достижения**\n\n"
-    for key, ach in ACHIEVEMENTS.items():
-        if ach['name'] in player.get('achievements', []):
-            text += f"✅ {ach['emoji']} {ach['name']} (+{ach['reward']}⭐)\n"
-        else:
-            text += f"🔒 {ach['emoji']} {ach['name']} — {ach['desc']}\n"
-    text += f"\n⭐ Всего звёзд: {player['stars']}"
-    
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def daily_reward(message, player):
-    today = datetime.now().date()
-    last_daily = player.get('last_daily')
-    
-    if last_daily and datetime.fromisoformat(last_daily).date() == today:
-        keyboard = types.InlineKeyboardMarkup()
-        keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
-        bot.send_message(message.chat.id, "🎁 **Сегодня уже получал!**\nПриходи завтра!", parse_mode='Markdown', reply_markup=keyboard)
-        return
-    
-    reward_gold = random.randint(SETTINGS.get('daily_gold_min', 20), SETTINGS.get('daily_gold_max', 50))
-    reward_stars = random.randint(SETTINGS.get('daily_stars_min', 1), SETTINGS.get('daily_stars_max', 3))
-    
-    player['gold'] += reward_gold
-    player['stars'] += reward_stars
-    player['last_daily'] = datetime.now().isoformat()
-    
-    text = f"""
-🎁 **Ежедневная награда!**
-
-💰 +{reward_gold} золота
-⭐ +{reward_stars} звёзд
-
-📅 Приходи завтра!
-"""
-    keyboard = types.InlineKeyboardMarkup()
-    keyboard.add(types.InlineKeyboardButton("🔙 Главное меню", callback_data="back_to_menu"))
-    bot.send_message(message.chat.id, text, parse_mode='Markdown', reply_markup=keyboard)
-
-def change_class(message, player):
-    keyboard = get_change_class_keyboard()
-    bot.send_message(message.chat.id, "🔄 **Выбери класс:**", parse_mode='Markdown', reply_markup=keyboard)
 
 # ============================================
 # === ЗАПУСК ===
